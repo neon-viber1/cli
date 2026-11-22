@@ -1321,3 +1321,55 @@ func TestSwapDirectoryContents_PreservesDestInode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "new", string(content), "staged content must be installed")
 }
+
+// A selected skill whose source cannot be resolved must make the command
+// fail and must never be reported as up to date.
+func TestUpdateRun_ResolveFailure(t *testing.T) {
+	for _, dryRun := range []bool{true, false} {
+		name := "real update"
+		if dryRun {
+			name = "dry run"
+		}
+		t.Run(name, func(t *testing.T) {
+			ios, _, stdout, stderr := iostreams.Test()
+			ios.SetStdoutTTY(false)
+			dir := t.TempDir()
+			skillDir := filepath.Join(dir, "fixture")
+			require.NoError(t, os.MkdirAll(skillDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(heredoc.Doc(`
+				---
+				name: fixture
+				metadata:
+				  github-repo: https://github.com/monalisa/octocat-skills
+				  github-path: skills/fixture
+				  github-tree-sha: abc
+				---
+				Fixture
+			`)), 0o644))
+
+			reg := &httpmock.Registry{}
+			reg.Register(
+				httpmock.REST("GET", "repos/monalisa/octocat-skills/releases/latest"),
+				httpmock.StatusStringResponse(500, "server error"))
+			reg.Register(
+				httpmock.REST("GET", "repos/monalisa/octocat-skills"),
+				httpmock.StatusStringResponse(500, "server error"))
+
+			err := updateRun(&UpdateOptions{
+				IO:     ios,
+				Config: func() (gh.Config, error) { return config.NewMockConfig(), nil },
+				HttpClient: func() (*http.Client, error) {
+					return &http.Client{Transport: reg}, nil
+				},
+				GitClient: &git.Client{RepoDir: dir},
+				Dir:       dir,
+				All:       true,
+				DryRun:    dryRun,
+			})
+			assert.Equal(t, cmdutil.SilentError, err)
+			assert.Contains(t, stderr.String(), "Skipping fixture: could not resolve")
+			assert.NotContains(t, stderr.String(), "up to date")
+			assert.Empty(t, stdout.String())
+		})
+	}
+}
