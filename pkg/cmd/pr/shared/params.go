@@ -96,7 +96,7 @@ func AddMetadataToIssueParams(client *api.Client, baseRepo ghrepo.Interface, par
 	if tb.ApiActorsSupported {
 		params["assigneeLogins"] = tb.Assignees
 	} else {
-		assigneeIDs, err := tb.MetadataResult.MembersToIDs(tb.Assignees)
+		assigneeIDs, err := tb.MetadataResult.AssigneesToIDs(client, baseRepo.RepoHost(), tb.Assignees)
 		if err != nil {
 			return fmt.Errorf("could not assign user: %w", err)
 		}

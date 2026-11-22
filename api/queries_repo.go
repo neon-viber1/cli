@@ -787,6 +787,32 @@ func (m *RepoMetadataResult) MembersToIDs(names []string) ([]string, error) {
 	return ids, nil
 }
 
+// AssigneesToIDs resolves assignee logins like MembersToIDs, but a login that
+// is absent from the assignable lists is looked up directly as a user. GitHub
+// can assign users who are neither members nor collaborators (for example a
+// commenter on a public repository), and those never appear in the lists.
+// The final "not found" error is unchanged when the user does not exist, and
+// lookups only happen for logins the lists could not resolve.
+func (m *RepoMetadataResult) AssigneesToIDs(client *Client, hostname string, names []string) ([]string, error) {
+	ids := make([]string, 0, len(names))
+	for _, name := range names {
+		resolved, err := m.MembersToIDs([]string{name})
+		if err == nil {
+			ids = append(ids, resolved...)
+			continue
+		}
+		id, lookupErr := UserID(client, hostname, name)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if id == "" {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 func (m *RepoMetadataResult) TeamsToIDs(names []string) ([]string, error) {
 	var ids []string
 	for _, teamSlug := range names {
