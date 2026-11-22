@@ -220,3 +220,35 @@ func TestRunExportData(t *testing.T) {
 		})
 	}
 }
+
+func TestGetRunWithoutWorkflowName(t *testing.T) {
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+
+	reg.Register(
+		httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/1234"),
+		httpmock.JSONResponse(FailedRun))
+	// No workflow stub is registered: any workflow lookup would fail the call.
+
+	apiClient := api.NewClientFromHTTP(&http.Client{Transport: reg})
+	run, err := GetRunWithoutWorkflowName(apiClient, ghrepo.New("OWNER", "REPO"), "1234", 0)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1234), run.ID)
+	assert.Equal(t, "", run.WorkflowName())
+}
+
+func TestGetRun_WorkflowLookupError(t *testing.T) {
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+
+	reg.Register(
+		httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/1234"),
+		httpmock.JSONResponse(FailedRun))
+	reg.Register(
+		httpmock.REST("GET", "repos/OWNER/REPO/actions/workflows/123"),
+		httpmock.StatusStringResponse(404, "{}"))
+
+	apiClient := api.NewClientFromHTTP(&http.Client{Transport: reg})
+	_, err := GetRun(apiClient, ghrepo.New("OWNER", "REPO"), "1234", 0)
+	assert.Error(t, err)
+}
