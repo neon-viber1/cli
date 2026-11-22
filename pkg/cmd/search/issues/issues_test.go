@@ -114,6 +114,24 @@ func TestNewCmdIssues(t *testing.T) {
 			},
 		},
 		{
+			name:    "internal visibility is rejected",
+			input:   "foo --visibility internal",
+			wantErr: true,
+			errMsg:  "invalid argument \"internal\" for \"--visibility\" flag: valid values are {public|private}",
+		},
+		{
+			name:  "multiple visibility values with language",
+			input: "foo --visibility public,private --language go",
+			output: shared.IssuesOptions{
+				Query: search.Query{
+					Keywords:   []string{"foo"},
+					Kind:       "issues",
+					Limit:      30,
+					Qualifiers: search.Qualifiers{Type: "issue", Language: "go", Is: []string{"public", "private"}},
+				},
+			},
+		},
+		{
 			name:    "invalid author and app flags",
 			input:   "--author test --app dependabot",
 			wantErr: true,
