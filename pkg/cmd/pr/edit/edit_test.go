@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/cli/cli/v2/api"
+	ghContext "github.com/cli/cli/v2/context"
+	"github.com/cli/cli/v2/git"
 	"github.com/cli/cli/v2/internal/attachments"
 	fd "github.com/cli/cli/v2/internal/featuredetection"
 	"github.com/cli/cli/v2/internal/gh"
@@ -427,6 +429,58 @@ func TestNewCmdEdit(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Editing by PR number with a repository override must not consult git at all,
+// so it works from a directory that is not a repository and from a detached HEAD.
+func TestEditRun_numberSelectorDoesNotUseGit(t *testing.T) {
+	ios, _, stdout, _ := iostreams.Test()
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+
+	reg.Register(
+		httpmock.GraphQL(`query PullRequestByNumber\b`),
+		httpmock.StringResponse(`{"data":{"repository":{"pullRequest":{
+			"id":"PR1","number":123,"url":"https://github.com/OWNER/REPO/pull/123","reviewRequests":{"nodes":[]}
+		}}}}`))
+	reg.Register(
+		httpmock.GraphQL(`query PullRequestProjectItems\b`),
+		httpmock.StringResponse(`{"data":{"repository":{"pullRequest":{"projectItems":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}`))
+	mockRepoMetadata(reg, mockRepoMetadataOptions{})
+	reg.Exclude(t, httpmock.GraphQL(`query OrganizationTeamList\b`))
+	mockPullRequestUpdate(reg)
+	mockRequestReviewsByLogin(reg)
+
+	f := &cmdutil.Factory{
+		IOStreams:  ios,
+		HttpClient: func() (*http.Client, error) { return &http.Client{Transport: reg}, nil },
+		BaseRepo:   func() (ghrepo.Interface, error) { return ghrepo.New("OWNER", "REPO"), nil },
+		Branch: func() (string, error) {
+			t.Error("current branch must not be resolved for a PR number")
+			return "", errors.New("branch lookup")
+		},
+		Remotes: func() (ghContext.Remotes, error) {
+			t.Error("git remotes must not be read for a PR number")
+			return nil, errors.New("remotes lookup")
+		},
+		GitClient: &git.Client{GitPath: "/nonexistent/git-must-not-run"},
+	}
+
+	cmd := NewCmdEdit(f, &telemetry.InvocationRecorderSpy{}, func(opts *EditOptions) error {
+		opts.Detector = &fd.EnabledDetectorMock{}
+		opts.Fetcher = testFetcher{}
+		return editRun(opts)
+	})
+	argv, err := shlex.Split("123 --add-reviewer OWNER/core")
+	require.NoError(t, err)
+	cmd.SetArgs(argv)
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	_, err = cmd.ExecuteC()
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/OWNER/REPO/pull/123\n", stdout.String())
 }
 
 func Test_editRun(t *testing.T) {
