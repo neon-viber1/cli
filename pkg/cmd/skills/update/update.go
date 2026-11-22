@@ -253,6 +253,9 @@ func updateRun(opts *UpdateOptions) error {
 	repoSkills := make(map[repoKey][]discovery.Skill)
 	repoRefs := make(map[repoKey]*discovery.ResolvedRef)
 	repoErrors := make(map[repoKey]bool)
+	// checkFailed records that a selected skill could not be checked because
+	// its source repository could not be resolved or discovered.
+	checkFailed := false
 
 	for _, s := range installed {
 		if s.owner == "" || s.repo == "" {
@@ -266,6 +269,7 @@ func updateRun(opts *UpdateOptions) error {
 		key := repoKey{s.repoHost, s.owner, s.repo}
 
 		if repoErrors[key] {
+			checkFailed = true
 			continue
 		}
 
@@ -274,6 +278,7 @@ func updateRun(opts *UpdateOptions) error {
 			resolved, resolveErr := discovery.ResolveRef(apiClient, s.repoHost, s.owner, s.repo, "")
 			if resolveErr != nil {
 				repoErrors[key] = true
+				checkFailed = true
 				opts.IO.StopProgressIndicator()
 				fmt.Fprintf(opts.IO.ErrOut, "%s Skipping %s: could not resolve %s/%s: %v\n", cs.WarningIcon(), s.name, s.owner, s.repo, resolveErr)
 				opts.IO.StartProgressIndicatorWithLabel(fmt.Sprintf("Checking %d installed skill(s) for updates", len(installed)))
@@ -284,6 +289,7 @@ func updateRun(opts *UpdateOptions) error {
 			skills, discoverErr := discovery.DiscoverSkills(apiClient, s.repoHost, s.owner, s.repo, resolved.SHA)
 			if discoverErr != nil {
 				repoErrors[key] = true
+				checkFailed = true
 				opts.IO.StopProgressIndicator()
 				fmt.Fprintf(opts.IO.ErrOut, "%s Skipping %s: %v\n", cs.WarningIcon(), s.name, discoverErr)
 				opts.IO.StartProgressIndicatorWithLabel(fmt.Sprintf("Checking %d installed skill(s) for updates", len(installed)))
@@ -342,6 +348,9 @@ func updateRun(opts *UpdateOptions) error {
 	}
 
 	if len(updates) == 0 {
+		if checkFailed {
+			return cmdutil.SilentError
+		}
 		if opts.Force && opts.DryRun {
 			fmt.Fprintf(opts.IO.ErrOut, "All skills are up to date. Use --force without --dry-run to re-download anyway.\n")
 		} else {
@@ -366,6 +375,9 @@ func updateRun(opts *UpdateOptions) error {
 	fmt.Fprintln(opts.IO.ErrOut)
 
 	if opts.DryRun {
+		if checkFailed {
+			return cmdutil.SilentError
+		}
 		return nil
 	}
 
@@ -397,7 +409,7 @@ func updateRun(opts *UpdateOptions) error {
 		}
 	}
 
-	if failed {
+	if failed || checkFailed {
 		return cmdutil.SilentError
 	}
 
