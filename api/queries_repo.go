@@ -903,10 +903,20 @@ func ProjectTitlesToPaths(client *Client, repo ghrepo.Interface, titles []string
 		}
 	}
 
-	// Then we'll try to match against v2 projects
-	v2Projects, err := v2Projects(client, repo)
+	// Then we'll try to match against v2 projects. The web form only offers
+	// projects linked to the repo or owned by the repo owner, so personal
+	// projects of the viewer are tracked separately and rejected.
+	src, err := v2ProjectsBySource(client, repo)
 	if err != nil {
 		return nil, err
+	}
+	v2Projects := make([]ProjectV2, 0, len(src.repo)+len(src.org)+len(src.user))
+	v2Projects = append(v2Projects, src.repo...)
+	v2Projects = append(v2Projects, src.org...)
+	for _, p := range src.user {
+		if parts := strings.Split(p.ResourcePath, "/"); len(parts) > 2 && strings.EqualFold(parts[2], repo.RepoOwner()) {
+			v2Projects = append(v2Projects, p)
+		}
 	}
 
 	for _, title := range titles {
@@ -932,6 +942,11 @@ func ProjectTitlesToPaths(client *Client, repo ghrepo.Interface, titles []string
 		}
 
 		if !found {
+			for _, p := range src.user {
+				if strings.EqualFold(title, p.Title) {
+					return nil, fmt.Errorf("project '%s' cannot be selected with --web because it is not owned by or linked to %s; create it without --web to add this project", title, ghrepo.FullName(repo))
+				}
+			}
 			return nil, fmt.Errorf("'%s' not found", title)
 		}
 	}
@@ -1555,6 +1570,36 @@ func v1Projects(client *Client, repo ghrepo.Interface) ([]RepoProject, error) {
 // - ProjectsV2 linked to repository
 // - ProjectsV2 owned by repository organization, if it belongs to one
 func v2Projects(client *Client, repo ghrepo.Interface) ([]ProjectV2, error) {
+	src, err := v2ProjectsBySource(client, repo)
+	if err != nil {
+		return nil, err
+	}
+	userProjectsV2, repoProjectsV2, orgProjectsV2 := src.user, src.repo, src.org
+	// ProjectV2 might appear across multiple queries so use a map to keep them deduplicated.
+	m := make(map[string]ProjectV2, len(userProjectsV2)+len(repoProjectsV2)+len(orgProjectsV2))
+	for _, p := range userProjectsV2 {
+		m[p.ID] = p
+	}
+	for _, p := range repoProjectsV2 {
+		m[p.ID] = p
+	}
+	for _, p := range orgProjectsV2 {
+		m[p.ID] = p
+	}
+	projectsV2 := make([]ProjectV2, 0, len(m))
+	for _, p := range m {
+		projectsV2 = append(projectsV2, p)
+	}
+
+	return projectsV2, nil
+}
+
+// projectsV2BySource keeps the origin of each ProjectV2 list.
+type projectsV2BySource struct {
+	user, repo, org []ProjectV2
+}
+
+func v2ProjectsBySource(client *Client, repo ghrepo.Interface) (projectsV2BySource, error) {
 	var userProjectsV2 []ProjectV2
 	var repoProjectsV2 []ProjectV2
 	var orgProjectsV2 []ProjectV2
@@ -1594,26 +1639,10 @@ func v2Projects(client *Client, repo ghrepo.Interface) ([]ProjectV2, error) {
 	})
 
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return projectsV2BySource{}, err
 	}
 
-	// ProjectV2 might appear across multiple queries so use a map to keep them deduplicated.
-	m := make(map[string]ProjectV2, len(userProjectsV2)+len(repoProjectsV2)+len(orgProjectsV2))
-	for _, p := range userProjectsV2 {
-		m[p.ID] = p
-	}
-	for _, p := range repoProjectsV2 {
-		m[p.ID] = p
-	}
-	for _, p := range orgProjectsV2 {
-		m[p.ID] = p
-	}
-	projectsV2 := make([]ProjectV2, 0, len(m))
-	for _, p := range m {
-		projectsV2 = append(projectsV2, p)
-	}
-
-	return projectsV2, nil
+	return projectsV2BySource{user: userProjectsV2, repo: repoProjectsV2, org: orgProjectsV2}, nil
 }
 
 func CreateRepoTransformToV4(apiClient *Client, hostname string, method string, path safeurl.SafeURL, body io.Reader) (*Repository, error) {

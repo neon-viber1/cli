@@ -572,12 +572,12 @@ func Test_ProjectNamesToPaths(t *testing.T) {
 		} } } }
 		`))
 
-		projectPaths, err := ProjectTitlesToPaths(client, repo, []string{"Triage", "Roadmap", "TriageV2", "RoadmapV2", "MonalisaV2"}, gh.ProjectsV1Supported)
+		projectPaths, err := ProjectTitlesToPaths(client, repo, []string{"Triage", "Roadmap", "TriageV2", "RoadmapV2"}, gh.ProjectsV1Supported)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		expectedProjectPaths := []string{"ORG/1", "OWNER/REPO/2", "ORG/2", "OWNER/REPO/4", "MONALISA/5"}
+		expectedProjectPaths := []string{"ORG/1", "OWNER/REPO/2", "ORG/2", "OWNER/REPO/4"}
 		if !slices.Equal(projectPaths, expectedProjectPaths) {
 			t.Errorf("expected projects paths %v, got %v", expectedProjectPaths, projectPaths)
 		}
@@ -630,14 +630,43 @@ func Test_ProjectNamesToPaths(t *testing.T) {
 		} } } }
 		`))
 
-		projectPaths, err := ProjectTitlesToPaths(client, repo, []string{"TriageV2", "RoadmapV2", "MonalisaV2"}, gh.ProjectsV1Unsupported)
+		projectPaths, err := ProjectTitlesToPaths(client, repo, []string{"TriageV2", "RoadmapV2"}, gh.ProjectsV1Unsupported)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		expectedProjectPaths := []string{"ORG/2", "OWNER/REPO/4", "MONALISA/5"}
+		expectedProjectPaths := []string{"ORG/2", "OWNER/REPO/4"}
 		if !slices.Equal(projectPaths, expectedProjectPaths) {
 			t.Errorf("expected projects paths %v, got %v", expectedProjectPaths, projectPaths)
+		}
+	})
+
+	t.Run("a project owned only by the viewer cannot be used with the web form", func(t *testing.T) {
+		http := &httpmock.Registry{}
+		client := newTestClient(http)
+
+		repo, _ := ghrepo.FromFullName("OWNER/REPO")
+
+		http.Register(
+			httpmock.GraphQL(`query RepositoryProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "repository": { "projectsV2": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query OrganizationProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "organization": { "projectsV2": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query UserProjectV2List\b`),
+			httpmock.StringResponse(`
+		{ "data": { "viewer": { "projectsV2": {
+			"nodes": [
+				{ "title": "MonalisaV2", "id": "MONALISAV2ID", "resourcePath": "/users/MONALISA/projects/5"  }
+			],
+			"pageInfo": { "hasNextPage": false }
+		} } } }
+		`))
+
+		_, err := ProjectTitlesToPaths(client, repo, []string{"MonalisaV2"}, gh.ProjectsV1Unsupported)
+		if err == nil || !strings.Contains(err.Error(), "cannot be selected with --web") {
+			t.Fatalf("expected web-unusable project error, got %v", err)
 		}
 	})
 

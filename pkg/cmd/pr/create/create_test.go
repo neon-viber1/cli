@@ -1197,6 +1197,39 @@ func Test_createRun(t *testing.T) {
 			expectedBrowse: "https://github.com/OWNER/REPO/compare/master...feature?body=&expand=1&projects=ORG%2F1",
 		},
 		{
+			name: "web project owned only by the viewer",
+			tty:  true,
+			setup: func(opts *CreateOptions, t *testing.T) func() {
+				opts.WebMode = true
+				opts.Projects = []string{"MonalisaV2"}
+				return func() {}
+			},
+			httpStubs: func(reg *httpmock.Registry, t *testing.T) {
+				reg.StubRepoResponse("OWNER", "REPO")
+				reg.Register(
+					httpmock.GraphQL(`query UserCurrent\b`),
+					httpmock.StringResponse(`{"data": {"viewer": {"login": "OWNER"} } }`))
+				mockRetrieveProjects(t, reg)
+			},
+			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git( .+)? log( .+)? origin/master\.\.\.feature`, 0, "")
+				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
+				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
+			},
+			promptStubs: func(pm *prompter.PrompterMock) {
+				pm.SelectFunc = func(p, _ string, opts []string) (int, error) {
+					if p == "Where should we push the 'feature' branch?" {
+						return 0, nil
+					} else {
+						return -1, prompter.NoSuchPromptErr(p)
+					}
+				}
+			},
+			wantErr: "could not add to project: project 'MonalisaV2' cannot be selected with --web because it is not owned by or linked to OWNER/REPO; create it without --web to add this project",
+		},
+		{
 			name: "draft",
 			tty:  true,
 			setup: func(opts *CreateOptions, t *testing.T) func() {
