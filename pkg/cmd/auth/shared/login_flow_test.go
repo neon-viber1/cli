@@ -14,6 +14,7 @@ import (
 	"github.com/cli/cli/v2/internal/config"
 	"github.com/cli/cli/v2/internal/gh"
 	"github.com/cli/cli/v2/internal/gh/ghtelemetry"
+	"github.com/cli/cli/v2/internal/keyring"
 	"github.com/cli/cli/v2/internal/prompter"
 	"github.com/cli/cli/v2/internal/run"
 	"github.com/cli/cli/v2/internal/telemetry"
@@ -682,6 +683,72 @@ func TestLogin_pastedTokenIgnoresConfiguredExpiringPreference(t *testing.T) {
 	events := recorder.Events()
 	require.Len(t, events, 1)
 	assert.Equal(t, "false", events[0].Dimensions["expiring_requested"])
+}
+
+func TestLogin_keyringTimeoutHint(t *testing.T) {
+	// A config-derived expiring preference must not leak into a login where the user pastes a token, which can never
+	// be expiring: no expiring credential-helper prompt and no expiring request in telemetry.
+	keyring.MockTimedOut(t)
+	ios, _, _, stderr := iostreams.Test()
+	recorder := &telemetry.InvocationRecorderSpy{}
+
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+	reg.Register(
+		httpmock.REST("GET", ""),
+		httpmock.ScopesResponder("repo,read:org"))
+	reg.Register(
+		httpmock.GraphQL(`query UserCurrent\b`),
+		httpmock.StringResponse(`{"data":{"viewer":{ "login": "monalisa" }}}`))
+
+	opts := &LoginOptions{
+		IO:            ios,
+		Config:        insecureFallbackConfig{tinyConfig{}},
+		SecureStorage: true,
+		HTTPClient:    &http.Client{Transport: reg},
+		Hostname:      "github.com",
+		Interactive:   true,
+		GitProtocol:   "https",
+		Expiring:      true,
+		Telemetry:     recorder,
+		Prompter: &prompter.PrompterMock{
+			SelectFunc: func(prompt, _ string, opts []string) (int, error) {
+				if prompt == "How would you like to authenticate GitHub CLI?" {
+					return prompter.IndexFor(opts, "Paste an authentication token")
+				}
+				return -1, prompter.NoSuchPromptErr(prompt)
+			},
+			AuthTokenFunc: func() (string, error) {
+				return "ATOKEN", nil
+			},
+		},
+		CredentialFlow: &GitCredentialFlow{
+			// The non-expiring helper prompt is a Confirm. The expiring one is a Select, which is left unset so the
+			// mock panics if it is reached.
+			Prompter: &prompter.PrompterMock{
+				ConfirmFunc: func(prompt string, _ bool) (bool, error) {
+					return true, nil
+				},
+			},
+			HelperConfig: &gitcredentials.FakeHelperConfig{
+				SelfExecutablePath: "/path/to/gh",
+				Helpers:            map[string]gitcredentials.Helper{},
+			},
+		},
+	}
+
+	require.NoError(t, Login(opts))
+
+	assert.Contains(t, stderr.String(), "the system keyring did not respond")
+	assert.Contains(t, stderr.String(), "--insecure-storage")
+}
+
+// insecureFallbackConfig simulates a keyring failure that made login fall back to plain text storage.
+type insecureFallbackConfig struct{ tinyConfig }
+
+func (c insecureFallbackConfig) Login(host, username, token, gitProtocol string, encrypt bool) (bool, error) {
+	_, err := c.tinyConfig.Login(host, username, token, gitProtocol, encrypt)
+	return true, err
 }
 
 func TestLogin_recordsAuthTelemetry(t *testing.T) {

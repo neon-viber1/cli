@@ -14,6 +14,7 @@ import (
 	"github.com/cli/cli/v2/api"
 	"github.com/cli/cli/v2/internal/config"
 	"github.com/cli/cli/v2/internal/gh"
+	"github.com/cli/cli/v2/internal/keyring"
 	"github.com/cli/cli/v2/internal/text"
 	"github.com/cli/cli/v2/pkg/cmd/auth/shared"
 	"github.com/cli/cli/v2/pkg/cmdutil"
@@ -380,6 +381,7 @@ func statusRun(opts *StatusOptions) error {
 	if opts.Exporter != nil {
 		// In machine-friendly mode, we always exit with no error.
 		opts.Exporter.Write(opts.IO, statuses)
+		warnKeyringUnresponsive(opts.IO, cs)
 		return nil
 	}
 
@@ -408,7 +410,16 @@ func statusRun(opts *StatusOptions) error {
 		}
 	}
 
+	warnKeyringUnresponsive(opts.IO, cs)
 	return finalErr
+}
+
+// warnKeyringUnresponsive explains on stderr why credentials may be missing when the system keyring timed out while
+// the statuses were being collected. Stdout and the exit code are left untouched.
+func warnKeyringUnresponsive(io *iostreams.IOStreams, cs *iostreams.ColorScheme) {
+	if err := keyring.TimedOut(); err != nil {
+		fmt.Fprintf(io.ErrOut, "\n%s %s\n", cs.WarningIcon(), err)
+	}
 }
 
 // knownTokenPrefixes contains GitHub's token format prefixes.
