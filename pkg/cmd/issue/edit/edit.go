@@ -109,6 +109,7 @@ func NewCmdEdit(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder, ru
 			$ gh issue edit 23 --add-assignee "@me" --remove-assignee monalisa,hubot
 			$ gh issue edit 23 --add-assignee "@copilot"
 			$ gh issue edit 23 --add-project "Roadmap" --remove-project v1,v2
+			$ gh issue edit 23 --add-project "my-org/12"
 			$ gh issue edit 23 --milestone "Version 1"
 			$ gh issue edit 23 --remove-milestone
 			$ gh issue edit 23 --body-file body.txt
@@ -257,8 +258,8 @@ func NewCmdEdit(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder, ru
 	cmd.Flags().StringSliceVar(&opts.Editable.Assignees.Remove, "remove-assignee", nil, "Remove assigned users by their `login`. Use \"@me\" to unassign yourself, or \"@copilot\" to unassign Copilot.")
 	cmd.Flags().StringSliceVar(&opts.Editable.Labels.Add, "add-label", nil, "Add labels by `name`")
 	cmd.Flags().StringSliceVar(&opts.Editable.Labels.Remove, "remove-label", nil, "Remove labels by `name`")
-	cmd.Flags().StringSliceVar(&opts.Editable.Projects.Add, "add-project", nil, "Add the issue to projects by `title`")
-	cmd.Flags().StringSliceVar(&opts.Editable.Projects.Remove, "remove-project", nil, "Remove the issue from projects by `title`")
+	cmd.Flags().StringSliceVar(&opts.Editable.Projects.Add, "add-project", nil, "Add the issue to projects by `title` or <owner>/<number>")
+	cmd.Flags().StringSliceVar(&opts.Editable.Projects.Remove, "remove-project", nil, "Remove the issue from projects by `title` or <owner>/<number>")
 	cmd.Flags().StringVarP(&opts.Editable.Milestone.Value, "milestone", "m", "", "Edit the milestone the issue belongs to by `name`")
 	cmd.Flags().BoolVar(&removeMilestone, "remove-milestone", false, "Remove the milestone association from the issue")
 	cmd.Flags().StringVar(&opts.Editable.IssueType.Value, "type", "", "Set the issue type by `name`")

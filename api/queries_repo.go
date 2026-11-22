@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -824,7 +825,8 @@ func (m *RepoMetadataResult) LabelsToIDs(names []string) ([]string, error) {
 	return ids, nil
 }
 
-// ProjectsTitlesToIDs returns two arrays:
+// ProjectsTitlesToIDs returns two arrays. Each value may be a project title or,
+// for projects V2, an "<owner>/<number>" reference:
 // - the first contains IDs of projects V1
 // - the second contains IDs of projects V2
 // - if neither project V1 or project V2 can be found with a given name, then an error is returned
@@ -838,7 +840,10 @@ func (m *RepoMetadataResult) ProjectsTitlesToIDs(titles []string) ([]string, []s
 			continue
 		}
 
-		idV2, found := m.v2ProjectTitleToID(title)
+		idV2, found, err := m.v2ProjectToID(title)
+		if err != nil {
+			return nil, nil, err
+		}
 		if found {
 			idsV2 = append(idsV2, idV2)
 			continue
@@ -862,14 +867,96 @@ func (m *RepoMetadataResult) v1ProjectNameToID(name string) (string, bool) {
 	return "", false
 }
 
-func (m *RepoMetadataResult) v2ProjectTitleToID(title string) (string, bool) {
-	for _, p := range m.ProjectsV2 {
-		if strings.EqualFold(title, p.Title) {
-			return p.ID, true
+// v2ProjectToID resolves a user-supplied value to a project V2 ID. The value is
+// first tried as an "<owner>/<number>" reference and then as a title. A title
+// that matches more than one distinct project is an error rather than an
+// arbitrary pick.
+func (m *RepoMetadataResult) v2ProjectToID(value string) (string, bool, error) {
+	p, found, err := matchProjectV2(m.ProjectsV2, value)
+	if err != nil || !found {
+		return "", false, err
+	}
+	return p.ID, true, nil
+}
+
+// projectV2Owner returns the owner login of a project V2, derived from its resource path.
+func projectV2Owner(p ProjectV2) string {
+	pathParts := strings.Split(p.ResourcePath, "/")
+	if len(pathParts) > 2 && (pathParts[1] == "orgs" || pathParts[1] == "users") {
+		return pathParts[2]
+	}
+	if len(pathParts) > 1 {
+		return pathParts[1]
+	}
+	return ""
+}
+
+// projectV2Number returns the number of a project V2, falling back to the resource path.
+func projectV2Number(p ProjectV2) int {
+	if p.Number != 0 {
+		return p.Number
+	}
+	pathParts := strings.Split(p.ResourcePath, "/")
+	if len(pathParts) > 0 {
+		if n, err := strconv.Atoi(pathParts[len(pathParts)-1]); err == nil {
+			return n
 		}
 	}
+	return 0
+}
 
-	return "", false
+// parseProjectRef parses an "<owner>/<number>" project reference.
+func parseProjectRef(value string) (string, int, bool) {
+	owner, num, ok := strings.Cut(value, "/")
+	if !ok || owner == "" || strings.Contains(num, "/") {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return owner, n, true
+}
+
+// matchProjectV2 finds the project V2 identified by value, which is either an
+// "<owner>/<number>" reference or a case-insensitive title. A title shared by
+// several projects yields an error listing the "<owner>/<number>" alternatives.
+func matchProjectV2(projects []ProjectV2, value string) (ProjectV2, bool, error) {
+	if owner, number, ok := parseProjectRef(value); ok {
+		for _, p := range projects {
+			if strings.EqualFold(owner, projectV2Owner(p)) && number == projectV2Number(p) {
+				return p, true, nil
+			}
+		}
+		// Fall through: the value may be a title that happens to look like a reference.
+	}
+
+	var matches []ProjectV2
+	for _, p := range projects {
+		if strings.EqualFold(value, p.Title) {
+			matches = append(matches, p)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return ProjectV2{}, false, nil
+	case 1:
+		return matches[0], true, nil
+	}
+	refs := make([]string, 0, len(matches))
+	for _, p := range matches {
+		refs = append(refs, fmt.Sprintf("%s/%d", projectV2Owner(p), projectV2Number(p)))
+	}
+	return ProjectV2{}, false, fmt.Errorf("'%s' matches multiple projects: %s; use <owner>/<number> to choose one", value, strings.Join(refs, ", "))
+}
+
+// projectV2Path converts a project V2 into the path used in web URL parameters.
+func projectV2Path(p ProjectV2) string {
+	pathParts := strings.Split(p.ResourcePath, "/")
+	if pathParts[1] == "orgs" || pathParts[1] == "users" {
+		return fmt.Sprintf("%s/%s", pathParts[2], pathParts[4])
+	}
+	return fmt.Sprintf("%s/%s/%s", pathParts[1], pathParts[2], pathParts[4])
 }
 
 func ProjectTitlesToPaths(client *Client, repo ghrepo.Interface, titles []string, projectsV1Support gh.ProjectsV1Support) ([]string, error) {
@@ -915,25 +1002,14 @@ func ProjectTitlesToPaths(client *Client, repo ghrepo.Interface, titles []string
 			continue
 		}
 
-		found := false
-		for _, p := range v2Projects {
-			if strings.EqualFold(title, p.Title) {
-				pathParts := strings.Split(p.ResourcePath, "/")
-				var path string
-				if pathParts[1] == "orgs" || pathParts[1] == "users" {
-					path = fmt.Sprintf("%s/%s", pathParts[2], pathParts[4])
-				} else {
-					path = fmt.Sprintf("%s/%s/%s", pathParts[1], pathParts[2], pathParts[4])
-				}
-				paths = append(paths, path)
-				found = true
-				break
-			}
+		p, found, err := matchProjectV2(v2Projects, title)
+		if err != nil {
+			return nil, err
 		}
-
 		if !found {
 			return nil, fmt.Errorf("'%s' not found", title)
 		}
+		paths = append(paths, projectV2Path(p))
 	}
 
 	return paths, nil
@@ -1597,20 +1673,18 @@ func v2Projects(client *Client, repo ghrepo.Interface) ([]ProjectV2, error) {
 		return nil, err
 	}
 
-	// ProjectV2 might appear across multiple queries so use a map to keep them deduplicated.
-	m := make(map[string]ProjectV2, len(userProjectsV2)+len(repoProjectsV2)+len(orgProjectsV2))
-	for _, p := range userProjectsV2 {
-		m[p.ID] = p
-	}
-	for _, p := range repoProjectsV2 {
-		m[p.ID] = p
-	}
-	for _, p := range orgProjectsV2 {
-		m[p.ID] = p
-	}
-	projectsV2 := make([]ProjectV2, 0, len(m))
-	for _, p := range m {
-		projectsV2 = append(projectsV2, p)
+	// ProjectV2 might appear across multiple queries so deduplicate by ID,
+	// keeping first-seen order so that results are deterministic.
+	seen := make(map[string]struct{}, len(userProjectsV2)+len(repoProjectsV2)+len(orgProjectsV2))
+	projectsV2 := make([]ProjectV2, 0, len(seen))
+	for _, list := range [][]ProjectV2{userProjectsV2, repoProjectsV2, orgProjectsV2} {
+		for _, p := range list {
+			if _, ok := seen[p.ID]; ok {
+				continue
+			}
+			seen[p.ID] = struct{}{}
+			projectsV2 = append(projectsV2, p)
+		}
 	}
 
 	return projectsV2, nil
