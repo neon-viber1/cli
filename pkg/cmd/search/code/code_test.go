@@ -3,6 +3,8 @@ package code
 import (
 	"bytes"
 	"fmt"
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/cli/cli/v2/internal/browser"
@@ -11,10 +13,12 @@ import (
 	"github.com/cli/cli/v2/internal/gh"
 	ghmock "github.com/cli/cli/v2/internal/gh/mock"
 	"github.com/cli/cli/v2/pkg/cmdutil"
+	"github.com/cli/cli/v2/pkg/httpmock"
 	"github.com/cli/cli/v2/pkg/iostreams"
 	"github.com/cli/cli/v2/pkg/search"
 	"github.com/google/shlex"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewCmdCode(t *testing.T) {
@@ -467,4 +471,31 @@ func TestFormatMatch(t *testing.T) {
 			assert.Equal(t, tt.want, formatMatch(tt.fragment, tt.matches, ios))
 		})
 	}
+}
+
+func TestCodeRun_rateLimitAfterFirstPage(t *testing.T) {
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+	reg.Register(
+		httpmock.QueryMatcher("GET", "search/code", url.Values{"page": []string{"1"}, "per_page": []string{"2"}, "q": []string{"x"}}),
+		httpmock.WithHeader(httpmock.JSONResponse(map[string]any{
+			"total_count": 5,
+			"items":       []any{map[string]any{"name": "a.go", "path": "a.go", "text_matches": []any{map[string]any{"fragment": "hit", "matches": []any{map[string]any{"text": "hit", "indices": []any{0, 3}}}}}, "repository": map[string]any{"full_name": "cli/cli"}}},
+		}), "Link", `<https://api.github.com/search/code?page=2&per_page=2&q=x>; rel="next"`),
+	)
+	reg.Register(
+		httpmock.QueryMatcher("GET", "search/code", url.Values{"page": []string{"2"}, "per_page": []string{"2"}, "q": []string{"x"}}),
+		httpmock.WithHeader(httpmock.StatusStringResponse(403, `{"message":"API rate limit exceeded for user ID 1."}`), "Content-Type", "application/json"),
+	)
+	ios, _, stdout, _ := iostreams.Test()
+	opts := &CodeOptions{
+		IO:       ios,
+		Browser:  &browser.Stub{},
+		Query:    search.Query{Keywords: []string{"x"}, Kind: "code", Limit: 2},
+		Searcher: search.NewSearcher(&http.Client{Transport: reg}, "github.com", &fd.DisabledDetectorMock{}),
+	}
+	err := codeRun(opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 403: API rate limit exceeded")
+	assert.Equal(t, "cli/cli:a.go: hit\n", stdout.String())
 }

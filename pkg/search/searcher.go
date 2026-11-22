@@ -386,3 +386,16 @@ func nextPage(link string) (page int) {
 	}
 	return 0
 }
+
+// IsRateLimitError reports whether err is a search API response rejecting the
+// request because a rate limit was exceeded (HTTP 429, or HTTP 403 mentioning
+// the rate limit). Pagers return the results collected before such an error,
+// so callers can use them to avoid discarding completed pages.
+func IsRateLimitError(err error) bool {
+	e, ok := errors.AsType[httpError](err)
+	if !ok {
+		return false
+	}
+	return e.StatusCode == http.StatusTooManyRequests ||
+		(e.StatusCode == http.StatusForbidden && strings.Contains(strings.ToLower(e.Message), "rate limit"))
+}

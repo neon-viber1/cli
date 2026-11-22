@@ -1462,3 +1462,14 @@ func TestSearcherStopsPagingOnEmptyPageOrTotal(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestIsRateLimitError(t *testing.T) {
+	reg := &httpmock.Registry{}
+	reg.Register(httpmock.REST("GET", "search/code"),
+		httpmock.WithHeader(httpmock.StatusStringResponse(403, `{"message":"API rate limit exceeded for user ID 1."}`), "Content-Type", "application/json"))
+	s := NewSearcher(&http.Client{Transport: reg}, "github.com", &fd.DisabledDetectorMock{})
+	_, err := s.Code(Query{Kind: KindCode, Limit: 1})
+	require.Error(t, err)
+	assert.True(t, IsRateLimitError(err), "%T %v", err, err)
+	assert.False(t, IsRateLimitError(fmt.Errorf("other")))
+}
