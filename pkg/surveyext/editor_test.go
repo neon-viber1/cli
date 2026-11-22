@@ -17,7 +17,9 @@ import (
 )
 
 func testLookPath(s string) ([]string, []string, error) {
-	return []string{os.Args[0], "-test.run=TestHelperProcess", "--", s}, []string{"GH_WANT_HELPER_PROCESS=1"}, nil
+	// Inherit the environment: on Windows a child started without SystemRoot
+	// and TEMP can fail to launch.
+	return []string{os.Args[0], "-test.run=TestHelperProcess", "--", s}, append(os.Environ(), "GH_WANT_HELPER_PROCESS=1"), nil
 }
 
 func TestHelperProcess(t *testing.T) {
@@ -35,6 +37,19 @@ func TestHelperProcess(t *testing.T) {
 			defer f.Close()
 			_, err = f.WriteString(" - added by vim")
 			return err
+		// "vimfail" appends a message to the file, then exits non-zero
+		case "vimfail", "noopfail":
+			if args[0] == "vimfail" {
+				f, err := os.OpenFile(args[1], os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				if _, err = f.WriteString(" - added by vim"); err != nil {
+					return err
+				}
+			}
+			return errors.New("editor failed")
 		// "nano" truncates the contents of the file
 		case "nano":
 			f, err := os.OpenFile(args[1], os.O_TRUNC|os.O_WRONLY, 0)
@@ -281,4 +296,27 @@ func normalizeANSI(t string) string {
 	t = strings.ReplaceAll(t, "\x1b[?25h", "") // strip sequence that shows cursor
 	t = strings.ReplaceAll(t, "\x1b[?25l", "") // strip sequence that hides cursor
 	return t
+}
+
+func Test_edit_editorFailureKeepsEditedText(t *testing.T) {
+	_, err := edit("vimfail", "*.md", "initial value", nil, nil, nil, nil, testLookPath)
+	assert.Error(t, err)
+
+	msg := err.Error()
+	idx := strings.Index(msg, "kept in ")
+	if !assert.GreaterOrEqual(t, idx, 0, msg) {
+		return
+	}
+	path := strings.TrimSuffix(msg[idx+len("kept in "):], ")")
+	t.Cleanup(func() { os.Remove(path) })
+
+	data, readErr := os.ReadFile(path)
+	assert.NoError(t, readErr)
+	assert.Equal(t, "initial value - added by vim", string(bytes.TrimPrefix(data, bom)))
+}
+
+func Test_edit_editorFailureWithoutChangesDiscardsFile(t *testing.T) {
+	_, err := edit("noopfail", "*.md", "initial value", nil, nil, nil, nil, testLookPath)
+	assert.Error(t, err)
+	assert.NotContains(t, err.Error(), "kept in")
 }
