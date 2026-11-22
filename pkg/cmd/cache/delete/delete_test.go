@@ -291,6 +291,54 @@ func TestDeleteRun(t *testing.T) {
 			wantStdout: "✓ Deleted 1 cache from OWNER/REPO\n",
 		},
 		{
+			name: "no caches to delete when deleting all",
+			opts: DeleteOptions{DeleteAll: true},
+			stubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/caches"),
+					httpmock.JSONResponse(shared.CachePayload{
+						ActionsCaches: []shared.Cache{},
+						TotalCount:    0,
+					}),
+				)
+			},
+			tty:        false,
+			wantErr:    true,
+			wantErrMsg: "X No caches to delete",
+		},
+		{
+			name: "no caches to delete when deleting all but succeed on no cache tty",
+			opts: DeleteOptions{DeleteAll: true, SucceedOnNoCaches: true},
+			stubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/caches"),
+					httpmock.JSONResponse(shared.CachePayload{
+						ActionsCaches: []shared.Cache{},
+						TotalCount:    0,
+					}),
+				)
+			},
+			tty:        true,
+			wantErr:    false,
+			wantStdout: "✓ No caches to delete\n",
+		},
+		{
+			name: "no caches to delete when deleting all but succeed on no cache non-tty",
+			opts: DeleteOptions{DeleteAll: true, SucceedOnNoCaches: true},
+			stubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/caches"),
+					httpmock.JSONResponse(shared.CachePayload{
+						ActionsCaches: []shared.Cache{},
+						TotalCount:    0,
+					}),
+				)
+			},
+			tty:        false,
+			wantErr:    false,
+			wantStdout: "",
+		},
+		{
 			name: "deletes cache with ref tty",
 			opts: DeleteOptions{Identifier: "cache-key", Ref: "refs/heads/main"},
 			stubs: func(reg *httpmock.Registry) {
