@@ -268,6 +268,12 @@ func NewCmdCreate(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder, 
 			By default, users with write access to the base repository can push new commits to the
 			head branch of the pull request. Disable this with %[1]s--no-maintainer-edit%[1]s.
 
+			The %[1]s--head%[1]s flag names a branch. To use a branch that was pushed to a fork or to
+			another owner's repository, qualify it as %[1]sOWNER:BRANCH%[1]s. The %[1]sREMOTE/BRANCH%[1]s form,
+			such as %[1]sorigin/feature%[1]s, is not supported: it is treated as a literal branch name. When
+			%[1]s--head%[1]s is given, the branch is not pushed and no push prompt is shown, so it must
+			already exist in the head repository.
+
 			Adding a pull request to projects requires authorization with the %[1]sproject%[1]s scope.
 			To authorize, run %[1]sgh auth refresh -s project%[1]s.
 		`, "`"),
@@ -276,6 +282,7 @@ func NewCmdCreate(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder, 
 			$ gh pr create --reviewer monalisa,hubot  --reviewer myorg/team-name
 			$ gh pr create --project "Roadmap"
 			$ gh pr create --base develop --head monalisa:feature
+			$ gh pr create --head monalisa:feature --fill --base main
 			$ gh pr create --template "pull_request_template.md"
 			$ gh pr create --attach './login.png#The login error state'
 			$ gh pr create --attach ./before.png --attach ./after.png
@@ -394,7 +401,7 @@ func NewCmdCreate(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder, 
 	fl.StringVarP(&opts.Body, "body", "b", "", "Body for the pull request")
 	fl.StringVarP(&bodyFile, "body-file", "F", "", "Read body text from `file` (use \"-\" to read from standard input)")
 	fl.StringVarP(&opts.BaseBranch, "base", "B", "", "The `branch` into which you want your code merged")
-	fl.StringVarP(&opts.HeadBranch, "head", "H", "", "The `branch` that contains commits for your pull request (default [current branch])")
+	fl.StringVarP(&opts.HeadBranch, "head", "H", "", "The `branch` that contains commits for your pull request, as BRANCH or OWNER:BRANCH for a fork; REMOTE/BRANCH is not supported (default [current branch])")
 	fl.BoolVarP(&opts.EditorMode, "editor", "e", false, "Skip prompts and open the text editor to write the title and body in. The first line is the title and the remaining text is the body.")
 	fl.BoolVarP(&opts.WebMode, "web", "w", false, "Open the web browser to create a pull request")
 	fl.BoolVarP(&opts.FillVerbose, "fill-verbose", "", false, "Use commits msg+body for description")

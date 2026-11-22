@@ -3578,3 +3578,16 @@ func Test_isSameRef(t *testing.T) {
 		})
 	}
 }
+
+func TestNewCmdCreate_headHelp(t *testing.T) {
+	ios, _, _, _ := iostreams.Test()
+	f := &cmdutil.Factory{IOStreams: ios}
+	cmd := NewCmdCreate(f, &telemetry.InvocationRecorderSpy{}, func(*CreateOptions) error { return nil })
+
+	flag := cmd.Flags().Lookup("head")
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "OWNER:BRANCH")
+	assert.Contains(t, flag.Usage, "REMOTE/BRANCH is not supported")
+	assert.Contains(t, cmd.Long, "OWNER:BRANCH")
+	assert.Contains(t, cmd.Example, "--head monalisa:feature --fill --base main")
+}
