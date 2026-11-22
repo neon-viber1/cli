@@ -54,9 +54,7 @@ type PullRequest struct {
 	MergeCommit          *Commit
 	PotentialMergeCommit *Commit
 
-	Files struct {
-		Nodes []PullRequestFile
-	}
+	Files PullRequestFiles
 
 	Author              Author
 	MergedBy            *Author
@@ -916,4 +914,14 @@ func ComparePullRequestBaseBranchWith(client *Client, repo ghrepo.Interface, prN
 		return nil, err
 	}
 	return &result.Repository.PullRequest.BaseRef.Compare, nil
+}
+
+// PullRequestFiles is a page-aware list of files changed by a pull request.
+// PageInfo is used internally to fetch remaining pages and is not exported to JSON.
+type PullRequestFiles struct {
+	Nodes    []PullRequestFile
+	PageInfo struct {
+		HasNextPage bool
+		EndCursor   string
+	}
 }

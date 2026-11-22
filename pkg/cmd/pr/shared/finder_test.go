@@ -3,10 +3,13 @@ package shared
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
+	"github.com/cli/cli/v2/api"
 	ghContext "github.com/cli/cli/v2/context"
 	"github.com/cli/cli/v2/git"
 	"github.com/cli/cli/v2/internal/ghrepo"
@@ -1007,4 +1010,72 @@ func (s *stubProgressIndicator) StartProgressIndicator() {
 
 func (s *stubProgressIndicator) StopProgressIndicator() {
 	s.stopCalled = true
+}
+
+func TestFind_filesPagination(t *testing.T) {
+	fileNodes := func(prefix string, n int) string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = fmt.Sprintf(`{"path":"%s%d","additions":1,"deletions":0,"changeType":"ADDED"}`, prefix, i)
+		}
+		return strings.Join(items, ",")
+	}
+	firstPage := func(hasNext bool) httpmock.Responder {
+		return httpmock.StringResponse(fmt.Sprintf(`{"data":{"repository":{"pullRequest":{
+			"id":"PR_1","number":13,"changedFiles":144,
+			"files":{"nodes":[%s],"pageInfo":{"hasNextPage":%t,"endCursor":"CUR1"}}
+		}}}}`, fileNodes("a", 100), hasNext))
+	}
+
+	find := func(t *testing.T, reg *httpmock.Registry) (*api.PullRequest, error) {
+		f := finder{
+			httpClient: func() (*http.Client, error) {
+				return &http.Client{Transport: reg}, nil
+			},
+			baseRepoFn: stubBaseRepoFn(ghrepo.New("OWNER", "REPO"), nil),
+			branchFn:   func() (string, error) { return "main", nil },
+		}
+		pr, _, err := f.Find(FindOptions{Selector: "13", Fields: []string{"id", "number", "files", "changedFiles"}})
+		return pr, err
+	}
+
+	t.Run("multiple pages", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		reg.Register(httpmock.GraphQL(`query PullRequestByNumber\b`), firstPage(true))
+		reg.Register(
+			httpmock.GraphQL(`query FilesForPullRequest\b`),
+			httpmock.GraphQLQuery(fmt.Sprintf(`{"data":{"node":{
+				"files":{"nodes":[%s],"pageInfo":{"hasNextPage":false,"endCursor":"CUR2"}}
+			}}}`, fileNodes("b", 44)), func(query string, inputs map[string]any) {
+				assert.Equal(t, "PR_1", inputs["id"])
+				assert.Equal(t, "CUR1", inputs["endCursor"])
+			}))
+
+		pr, err := find(t, reg)
+		require.NoError(t, err)
+		assert.Len(t, pr.Files.Nodes, 144)
+		assert.Equal(t, pr.ChangedFiles, len(pr.Files.Nodes))
+		assert.False(t, pr.Files.PageInfo.HasNextPage)
+	})
+
+	t.Run("single page makes no extra request", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		reg.Register(httpmock.GraphQL(`query PullRequestByNumber\b`), firstPage(false))
+
+		pr, err := find(t, reg)
+		require.NoError(t, err)
+		assert.Len(t, pr.Files.Nodes, 100)
+	})
+
+	t.Run("later page error is returned", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		reg.Register(httpmock.GraphQL(`query PullRequestByNumber\b`), firstPage(true))
+		reg.Register(httpmock.GraphQL(`query FilesForPullRequest\b`), httpmock.StatusStringResponse(500, `{}`))
+
+		_, err := find(t, reg)
+		require.Error(t, err)
+	})
 }

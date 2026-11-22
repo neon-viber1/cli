@@ -151,6 +151,10 @@ var prFiles = shortenQuery(`
 			path,
 			changeType
 		}
+		pageInfo {
+			hasNextPage,
+			endCursor
+		}
 	}
 `)
 

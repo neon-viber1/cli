@@ -269,6 +269,11 @@ func (f *finder) Find(opts FindOptions) (*api.PullRequest, ghrepo.Interface, err
 			return preloadPrReviews(httpClient, f.baseRefRepo, pr)
 		})
 	}
+	if fields.Contains("files") {
+		g.Go(func() error {
+			return preloadPrFiles(httpClient, f.baseRefRepo, pr)
+		})
+	}
 	if fields.Contains("comments") {
 		g.Go(func() error {
 			return preloadPrComments(httpClient, f.baseRefRepo, pr)
@@ -478,6 +483,47 @@ func preloadPrReviews(httpClient *http.Client, repo ghrepo.Interface, pr *api.Pu
 	}
 
 	pr.Reviews.PageInfo.HasNextPage = false
+	return nil
+}
+
+// preloadPrFiles fetches any files beyond the first page so that the result
+// matches the pull request's changedFiles count.
+func preloadPrFiles(client *http.Client, repo ghrepo.Interface, pr *api.PullRequest) error {
+	if !pr.Files.PageInfo.HasNextPage {
+		return nil
+	}
+
+	type response struct {
+		Node struct {
+			PullRequest struct {
+				Files api.PullRequestFiles `graphql:"files(first: 100, after: $endCursor)"`
+			} `graphql:"...on PullRequest"`
+		} `graphql:"node(id: $id)"`
+	}
+
+	variables := map[string]any{
+		"id":        githubv4.ID(pr.ID),
+		"endCursor": githubv4.String(pr.Files.PageInfo.EndCursor),
+	}
+
+	gql := api.NewClientFromHTTP(client)
+
+	for {
+		var query response
+		err := gql.Query(repo.RepoHost(), "FilesForPullRequest", &query, variables)
+		if err != nil {
+			return err
+		}
+
+		pr.Files.Nodes = append(pr.Files.Nodes, query.Node.PullRequest.Files.Nodes...)
+
+		if !query.Node.PullRequest.Files.PageInfo.HasNextPage {
+			break
+		}
+		variables["endCursor"] = githubv4.String(query.Node.PullRequest.Files.PageInfo.EndCursor)
+	}
+
+	pr.Files.PageInfo.HasNextPage = false
 	return nil
 }
 
