@@ -93,7 +93,9 @@ func NewCmdFork(f *cmdutil.Factory, runF func(*ForkOptions) error) *cobra.Comman
 			origin remote is renamed to %[1]supstream%[1]s. To alter this behavior, you can set
 			a name for the new fork's remote with %[1]s--remote-name%[1]s.
 
-			The %[1]supstream%[1]s remote will be set as the default remote repository.
+			The %[1]supstream%[1]s remote will be set as the default remote repository. When
+			adding a remote for the fork in an existing clone, the remote for the original
+			repository is set as the default if no default repository has been set yet.
 
 			Additional %[1]sgit clone%[1]s flags can be passed after %[1]s--%[1]s.
 		`, "`"),
@@ -312,6 +314,20 @@ func forkRun(opts *ForkOptions) error {
 				return err
 			}
 
+			// Remember which remote points at the forked-from repository, and
+			// whether a default repository is already recorded, so that a
+			// default can be set once the fork remote has been added.
+			baseRemoteName := ""
+			hasDefault := false
+			for _, r := range remotes {
+				if r.Resolved != "" {
+					hasDefault = true
+				}
+			}
+			if baseRemote, err := remotes.FindByRepo(repoToFork.RepoOwner(), repoToFork.RepoName()); err == nil {
+				baseRemoteName = baseRemote.Name
+			}
+
 			if _, err := remotes.FindByName(remoteName); err == nil {
 				if opts.Rename {
 					renameTarget := "upstream"
@@ -322,6 +338,10 @@ func forkRun(opts *ForkOptions) error {
 					_, err = renameCmd.Output()
 					if err != nil {
 						return err
+					}
+
+					if baseRemoteName == remoteName {
+						baseRemoteName = renameTarget
 					}
 
 					if connectedToTerminal {
@@ -341,6 +361,16 @@ func forkRun(opts *ForkOptions) error {
 
 			if connectedToTerminal {
 				fmt.Fprintf(stderr, "%s Added remote %s\n", cs.SuccessIcon(), cs.Bold(remoteName))
+			}
+
+			if !hasDefault && baseRemoteName != "" {
+				if err := gitClient.SetRemoteResolution(ctx, baseRemoteName, "base"); err != nil {
+					return fmt.Errorf("error setting %s as default: %w", baseRemoteName, err)
+				}
+
+				if connectedToTerminal {
+					fmt.Fprintf(stderr, "%s Repository %s set as the default repository. To learn more about the default repository, run: gh repo set-default --help\n", cs.WarningIcon(), cs.Bold(ghrepo.FullName(repoToFork)))
+				}
 			}
 		}
 	} else {
