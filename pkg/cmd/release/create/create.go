@@ -105,7 +105,9 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(*CreateOptions) error) *cobra.Co
 
 			By default, the release is created even if there are no new commits since the last release.
 			This may result in the same or duplicate release which may not be desirable in some cases.
-			Use %[1]s--fail-on-no-commits%[1]s to fail if no new commits are available. This flag has no
+			Use %[1]s--fail-on-no-commits%[1]s to fail if no new commits are available. New commits are
+			determined by comparing the latest release to the commit the release will point at: the existing
+			tag, or %[1]s--target%[1]s (else the default branch) when the tag does not exist yet. This flag has no
 			effect if there are no existing releases or this is the very first release.
 
 			## Immutable Releases
@@ -221,7 +223,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(*CreateOptions) error) *cobra.Co
 	cmdutil.NilBoolFlag(cmd, &opts.IsLatest, "latest", "", "Mark this release as \"Latest\" (default [automatic based on date and version]). --latest=false to explicitly NOT set as latest")
 	cmd.Flags().BoolVarP(&opts.VerifyTag, "verify-tag", "", false, "Abort in case the git tag doesn't already exist in the remote repository")
 	cmd.Flags().BoolVarP(&opts.NotesFromTag, "notes-from-tag", "", false, "Fetch notes from the tag annotation or message of commit associated with tag")
-	cmd.Flags().BoolVar(&opts.FailOnNoCommits, "fail-on-no-commits", false, "Fail if there are no commits since the last release (no impact on the first release)")
+	cmd.Flags().BoolVar(&opts.FailOnNoCommits, "fail-on-no-commits", false, "Fail if there are no commits since the last release, compared up to the release tag or target (no impact on the first release)")
 
 	_ = cmdutil.RegisterBranchCompletionFlags(f.GitClient, cmd, "target")
 
@@ -237,16 +239,6 @@ func createRun(opts *CreateOptions) error {
 	baseRepo, err := opts.BaseRepo()
 	if err != nil {
 		return err
-	}
-
-	if opts.FailOnNoCommits {
-		isNew, err := isNewRelease(httpClient, baseRepo)
-		if err != nil {
-			return fmt.Errorf("failed to check whether there were new commits since last release: %v", err)
-		}
-		if !isNew {
-			return fmt.Errorf("no new commits since the last release")
-		}
 	}
 
 	var existingTag bool
@@ -320,6 +312,36 @@ func createRun(opts *CreateOptions) error {
 				return fmt.Errorf("tag %s exists locally but has not been pushed to %s, please push it before continuing or specify the `--target` flag to create a new tag",
 					opts.TagName, ghrepo.FullName(baseRepo))
 			}
+		}
+	}
+
+	if opts.FailOnNoCommits {
+		// The comparison head is the commit the release will point at: an
+		// existing remote tag, else --target, else the default branch HEAD.
+		resolveHead := func() (string, error) {
+			tagExists := existingTag
+			if !tagExists {
+				var err error
+				tagExists, err = remoteTagExists(httpClient, baseRepo, opts.TagName)
+				if err != nil {
+					return "", err
+				}
+			}
+			switch {
+			case tagExists:
+				return opts.TagName, nil
+			case opts.Target != "":
+				return opts.Target, nil
+			default:
+				return "HEAD", nil
+			}
+		}
+		isNew, err := isNewRelease(httpClient, baseRepo, resolveHead)
+		if err != nil {
+			return fmt.Errorf("failed to check whether there were new commits since last release: %v", err)
+		}
+		if !isNew {
+			return fmt.Errorf("no new commits since the last release")
 		}
 	}
 

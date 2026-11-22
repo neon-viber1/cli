@@ -235,7 +235,9 @@ func tokenHasWorkflowScope(headers http.Header) bool {
 }
 
 // isNewRelease checks if there are new commits since the latest release.
-func isNewRelease(httpClient *http.Client, repo ghrepo.Interface) (bool, error) {
+// resolveHead is called only when a latest release exists and returns the ref
+// the new release will point at, which the latest release is compared to.
+func isNewRelease(httpClient *http.Client, repo ghrepo.Interface, resolveHead func() (string, error)) (bool, error) {
 	ctx := context.Background()
 	release, err := shared.FetchLatestRelease(ctx, httpClient, repo)
 	if err != nil {
@@ -246,8 +248,13 @@ func isNewRelease(httpClient *http.Client, repo ghrepo.Interface) (bool, error) 
 		}
 	}
 
+	head, err := resolveHead()
+	if err != nil {
+		return false, err
+	}
+
 	tagName := release.TagName
-	u, err := safeurl.JoinPath("repos", repo.RepoOwner(), repo.RepoName(), "compare", tagName+"...HEAD")
+	u, err := safeurl.JoinPath("repos", repo.RepoOwner(), repo.RepoName(), "compare", tagName+"..."+head)
 	if err != nil {
 		return false, err
 	}

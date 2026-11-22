@@ -527,6 +527,7 @@ func Test_createRun(t *testing.T) {
 				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/releases/latest"), httpmock.StatusStringResponse(200, `{
 					"tag_name": "v1.2.2"
 				}`))
+				reg.Register(httpmock.GraphQL("RepositoryFindRef"), httpmock.StringResponse(`{"data":{"repository":{"ref":null}}}`))
 				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/compare/v1.2.2...HEAD"), httpmock.StatusStringResponse(200, `{
 						"status": "ahead"
 				}`))
@@ -558,10 +559,12 @@ func Test_createRun(t *testing.T) {
 				Target:          "",
 				FailOnNoCommits: true,
 			},
+			runStubs: defaultRunStubs,
 			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
 				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/releases/latest"), httpmock.StatusStringResponse(200, `{
 					"tag_name": "v1.2.2"
 				}`))
+				reg.Register(httpmock.GraphQL("RepositoryFindRef"), httpmock.StringResponse(`{"data":{"repository":{"ref":null}}}`))
 				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/compare/v1.2.2...HEAD"), httpmock.StatusStringResponse(200, `{
 					"status": "identical"
 				}`))
@@ -569,6 +572,96 @@ func Test_createRun(t *testing.T) {
 			wantErr:    "no new commits since the last release",
 			wantStdout: "",
 			wantStderr: ``,
+		},
+		{
+			name:  "fail-on-no-commits compares against an existing remote tag on another branch",
+			isTTY: true,
+			opts: CreateOptions{
+				TagName:         "v1.2.3",
+				Name:            "The Big 1.2",
+				Body:            "* Fixed bugs",
+				BodyProvided:    true,
+				Target:          "",
+				FailOnNoCommits: true,
+			},
+			runStubs: defaultRunStubs,
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/releases/latest"), httpmock.StatusStringResponse(200, `{"tag_name": "v1.2.2"}`))
+				reg.Register(httpmock.GraphQL("RepositoryFindRef"), httpmock.StringResponse(`{"data":{"repository":{"ref":{"id":"x"}}}}`))
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/compare/v1.2.2...v1.2.3"), httpmock.StatusStringResponse(200, `{"status": "ahead"}`))
+				reg.Register(httpmock.REST("POST", "repos/OWNER/REPO/releases"), httpmock.StatusStringResponse(201, `{
+					"url": "https://api.github.com/releases/123",
+					"upload_url": "https://api.github.com/assets/upload",
+					"html_url": "https://github.com/OWNER/REPO/releases/tag/v1.2.3"
+				}`))
+			},
+			wantErr:    "",
+			wantStdout: "https://github.com/OWNER/REPO/releases/tag/v1.2.3\n",
+		},
+		{
+			name:  "fail-on-no-commits fails when the existing remote tag is not ahead",
+			isTTY: true,
+			opts: CreateOptions{
+				TagName:         "v1.2.3",
+				Name:            "The Big 1.2",
+				Body:            "* Fixed bugs",
+				BodyProvided:    true,
+				Target:          "",
+				FailOnNoCommits: true,
+			},
+			runStubs: defaultRunStubs,
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/releases/latest"), httpmock.StatusStringResponse(200, `{"tag_name": "v1.2.2"}`))
+				reg.Register(httpmock.GraphQL("RepositoryFindRef"), httpmock.StringResponse(`{"data":{"repository":{"ref":{"id":"x"}}}}`))
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/compare/v1.2.2...v1.2.3"), httpmock.StatusStringResponse(200, `{"status": "identical"}`))
+			},
+			wantErr:    "no new commits since the last release",
+			wantStdout: "",
+		},
+		{
+			name:  "fail-on-no-commits compares against target branch for a new tag",
+			isTTY: true,
+			opts: CreateOptions{
+				TagName:         "v1.2.3",
+				Name:            "The Big 1.2",
+				Body:            "* Fixed bugs",
+				BodyProvided:    true,
+				Target:          "feature",
+				FailOnNoCommits: true,
+			},
+			runStubs: defaultRunStubs,
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/releases/latest"), httpmock.StatusStringResponse(200, `{"tag_name": "v1.2.2"}`))
+				reg.Register(httpmock.GraphQL("RepositoryFindRef"), httpmock.StringResponse(`{"data":{"repository":{"ref":null}}}`))
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/compare/v1.2.2...feature"), httpmock.StatusStringResponse(200, `{"status": "ahead"}`))
+				reg.Register(httpmock.REST("POST", "repos/OWNER/REPO/releases"), httpmock.StatusStringResponse(201, `{
+					"url": "https://api.github.com/releases/123",
+					"upload_url": "https://api.github.com/assets/upload",
+					"html_url": "https://github.com/OWNER/REPO/releases/tag/v1.2.3"
+				}`))
+			},
+			wantErr:    "",
+			wantStdout: "https://github.com/OWNER/REPO/releases/tag/v1.2.3\n",
+		},
+		{
+			name:  "fail-on-no-commits fails when target commit is behind latest release",
+			isTTY: true,
+			opts: CreateOptions{
+				TagName:         "v1.2.3",
+				Name:            "The Big 1.2",
+				Body:            "* Fixed bugs",
+				BodyProvided:    true,
+				Target:          "abc123",
+				FailOnNoCommits: true,
+			},
+			runStubs: defaultRunStubs,
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/releases/latest"), httpmock.StatusStringResponse(200, `{"tag_name": "v1.2.2"}`))
+				reg.Register(httpmock.GraphQL("RepositoryFindRef"), httpmock.StringResponse(`{"data":{"repository":{"ref":null}}}`))
+				reg.Register(httpmock.REST("GET", "repos/OWNER/REPO/compare/v1.2.2...abc123"), httpmock.StatusStringResponse(200, `{"status": "behind"}`))
+			},
+			wantErr:    "no new commits since the last release",
+			wantStdout: "",
 		},
 		{
 			name:  "with discussion category",
