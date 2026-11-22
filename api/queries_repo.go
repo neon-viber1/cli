@@ -692,6 +692,49 @@ func LastCommit(client *Client, repo ghrepo.Interface) (*Commit, error) {
 	return &responseData.Repository.DefaultBranchRef.Target.Commit, nil
 }
 
+// RepoFindExistingUserFork returns a fork of the repo owned by the viewer's
+// personal account, or nil if there is none. It matches forks regardless of
+// their name, so forks that were renamed are found as well. Forks owned by
+// organizations are not considered.
+func RepoFindExistingUserFork(client *Client, repo ghrepo.Interface) (*Repository, error) {
+	result := struct {
+		Repository struct {
+			Forks struct {
+				Nodes []Repository
+			}
+		}
+	}{}
+
+	variables := map[string]any{
+		"owner": repo.RepoOwner(),
+		"repo":  repo.RepoName(),
+	}
+
+	if err := client.GraphQL(repo.RepoHost(), `
+	query RepositoryFindExistingUserFork($owner: String!, $repo: String!) {
+		repository(owner: $owner, name: $repo) {
+			forks(first: 1, affiliations: OWNER) {
+				nodes {
+					id
+					name
+					owner { login }
+					url
+					createdAt
+					viewerPermission
+				}
+			}
+		}
+	}
+	`, variables, &result); err != nil {
+		return nil, err
+	}
+
+	if len(result.Repository.Forks.Nodes) == 0 {
+		return nil, nil
+	}
+	return InitRepoHostname(&result.Repository.Forks.Nodes[0], repo.RepoHost()), nil
+}
+
 // RepoFindForks finds forks of the repo that are affiliated with the viewer
 func RepoFindForks(client *Client, repo ghrepo.Interface, limit int) ([]*Repository, error) {
 	result := struct {

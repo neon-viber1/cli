@@ -1370,3 +1370,31 @@ func TestGitIgnoreTemplateReturnsErrorWhenGitIgnoreTemplateNotFound(t *testing.T
 
 	assert.Error(t, err, fmt.Sprintf("Expected error while fetching /gitignore/templates/%v", gitIgnoreTemplateName))
 }
+
+func TestRepoFindExistingUserFork(t *testing.T) {
+	t.Run("returns the fork with host set", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		reg.Register(
+			httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`),
+			httpmock.StringResponse(`{"data":{"repository":{"forks":{"nodes":[{"id":"1","name":"renamed","owner":{"login":"me"}}]}}}}`))
+
+		fork, err := RepoFindExistingUserFork(newTestClient(reg), ghrepo.New("owner", "repo"))
+		require.NoError(t, err)
+		require.NotNil(t, fork)
+		require.Equal(t, "me/renamed", ghrepo.FullName(fork))
+		require.Equal(t, "github.com", fork.RepoHost())
+	})
+
+	t.Run("returns nil when there is no fork", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		reg.Register(
+			httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`),
+			httpmock.StringResponse(`{"data":{"repository":{"forks":{"nodes":[]}}}}`))
+
+		fork, err := RepoFindExistingUserFork(newTestClient(reg), ghrepo.New("owner", "repo"))
+		require.NoError(t, err)
+		require.Nil(t, fork)
+	})
+}

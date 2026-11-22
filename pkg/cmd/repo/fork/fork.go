@@ -212,19 +212,29 @@ func forkRun(opts *ForkOptions) error {
 	apiClient := api.NewClientFromHTTP(httpClient)
 
 	opts.IO.StartProgressIndicator()
-	forkedRepo, err := api.ForkRepo(apiClient, repoToFork, opts.Organization, opts.ForkName, opts.DefaultBranchOnly)
+	var forkedRepo *api.Repository
+	alreadyExisted := false
+	if opts.Organization == "" {
+		// Look for a fork the user already owns, which also finds renamed forks. A failed
+		// lookup is not fatal: we fall back to forking and the creation time heuristic below.
+		if existing, lookupErr := api.RepoFindExistingUserFork(apiClient, repoToFork); lookupErr == nil && existing != nil {
+			forkedRepo = existing
+			alreadyExisted = true
+		}
+	}
+	if forkedRepo == nil {
+		forkedRepo, err = api.ForkRepo(apiClient, repoToFork, opts.Organization, opts.ForkName, opts.DefaultBranchOnly)
+	}
 	opts.IO.StopProgressIndicator()
 	if err != nil {
 		return fmt.Errorf("failed to fork: %w", err)
 	}
 
-	// This is weird. There is not an efficient way to determine via the GitHub API whether or not a
-	// given user has forked a given repo. We noticed, also, that the create fork API endpoint just
-	// returns the fork repo data even if it already exists -- with no change in status code or
-	// anything. We thus check the created time to see if the repo is brand new or not; if it's not,
-	// we assume the fork already existed and report an error.
+	// The create fork API endpoint returns the existing fork with no change in status code when one
+	// exists. User forks are detected by the lookup above; as a fallback (for example when the lookup
+	// failed or for org forks) we check the created time to see if the repo is brand new or not.
 	createdAgo := opts.Since(forkedRepo.CreatedAt)
-	if createdAgo > time.Minute {
+	if alreadyExisted || createdAgo > time.Minute {
 		if connectedToTerminal {
 			fmt.Fprintf(stderr, "%s %s %s\n",
 				cs.Yellow("!"),
