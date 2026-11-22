@@ -519,6 +519,38 @@ func Test_createRun(t *testing.T) {
 			wantsStderr: "Opening https://github.com/OWNER/REPO/issues/new in your browser.\n",
 		},
 		{
+			name: "project owned only by the viewer is rejected in web mode",
+			opts: CreateOptions{
+				Detector: &fd.EnabledDetectorMock{},
+				WebMode:  true,
+				Projects: []string{"Monalisa"},
+			},
+			httpStubs: func(_ *testing.T, r *httpmock.Registry) {
+				r.Register(
+					httpmock.GraphQL(`query RepositoryProjectList\b`),
+					httpmock.StringResponse(`{ "data": { "repository": { "projects": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+				r.Register(
+					httpmock.GraphQL(`query OrganizationProjectList\b`),
+					httpmock.StringResponse(`{ "data": { "organization": { "projects": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+				r.Register(
+					httpmock.GraphQL(`query RepositoryProjectV2List\b`),
+					httpmock.StringResponse(`{ "data": { "repository": { "projectsV2": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+				r.Register(
+					httpmock.GraphQL(`query OrganizationProjectV2List\b`),
+					httpmock.StringResponse(`{ "data": { "organization": { "projectsV2": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+				r.Register(
+					httpmock.GraphQL(`query UserProjectV2List\b`),
+					httpmock.StringResponse(`
+					{ "data": { "viewer": { "projectsV2": {
+						"nodes": [
+							{ "title": "Monalisa", "id": "MONALISAID", "resourcePath": "/users/MONALISA/projects/1"  }
+						],
+						"pageInfo": { "hasNextPage": false }
+					} } } }`))
+			},
+			wantsErr: "could not add to project: project 'Monalisa' cannot be selected with --web because it is not owned by or linked to OWNER/REPO; create it without --web to add this project",
+		},
+		{
 			name: "has templates",
 			opts: CreateOptions{
 				Detector: &fd.EnabledDetectorMock{},
