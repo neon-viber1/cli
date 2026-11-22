@@ -556,7 +556,30 @@ func SelectRun(p Prompter, cs *iostreams.ColorScheme, runs []Run) (string, error
 	return fmt.Sprintf("%d", runs[selected].ID), nil
 }
 
+// GetRun fetches a workflow run and populates its workflow name with an
+// additional workflow lookup.
 func GetRun(client *api.Client, repo ghrepo.Interface, runID string, attempt uint64) (*Run, error) {
+	result, err := GetRunWithoutWorkflowName(client, repo, runID, attempt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set name to workflow name
+	workflow, err := workflowShared.GetWorkflow(client, repo, result.WorkflowID)
+	if err != nil {
+		return nil, err
+	}
+	result.workflowName = workflow.Name
+
+	return result, nil
+}
+
+// GetRunWithoutWorkflowName fetches a workflow run without looking up its
+// workflow. Use it when the workflow name is not needed: the workflow
+// endpoint can return 404 for runs of workflows defined in another
+// repository (for example, organization-required workflows), while the run
+// itself remains accessible. WorkflowName() is empty on the returned run.
+func GetRunWithoutWorkflowName(client *api.Client, repo ghrepo.Interface, runID string, attempt uint64) (*Run, error) {
 	var result Run
 
 	u, err := safeurl.JoinPath("repos", repo.RepoOwner(), repo.RepoName(), "actions", "runs", runID)
@@ -582,14 +605,6 @@ func GetRun(client *api.Client, repo ghrepo.Interface, runID string, attempt uin
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	// Set name to workflow name
-	workflow, err := workflowShared.GetWorkflow(client, repo, result.WorkflowID)
-	if err != nil {
-		return nil, err
-	} else {
-		result.workflowName = workflow.Name
 	}
 
 	return &result, nil
