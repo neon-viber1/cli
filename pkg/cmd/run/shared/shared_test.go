@@ -220,3 +220,44 @@ func TestRunExportData(t *testing.T) {
 		})
 	}
 }
+
+func TestGetRun_workflowLookup(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		wantErr      bool
+		wantWorkflow string
+	}{
+		{name: "workflow found", status: 200, wantWorkflow: "Test Workflow"},
+		{name: "workflow 404 falls back to run name", status: 404, wantWorkflow: "CI"},
+		{name: "workflow 403 is an error", status: 403, wantErr: true},
+		{name: "workflow 500 is an error", status: 500, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := &httpmock.Registry{}
+			defer reg.Verify(t)
+			reg.Register(
+				httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/1234"),
+				httpmock.JSONResponse(map[string]any{"id": 1234, "workflow_id": 123, "name": "CI"}))
+			if tt.status == 200 {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/workflows/123"),
+					httpmock.JSONResponse(map[string]any{"id": 123, "name": "Test Workflow"}))
+			} else {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/workflows/123"),
+					httpmock.StatusStringResponse(tt.status, "{}"))
+			}
+
+			client := api.NewClientFromHTTP(&http.Client{Transport: reg})
+			run, err := GetRun(client, ghrepo.New("OWNER", "REPO"), "1234", 0)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantWorkflow, run.WorkflowName())
+		})
+	}
+}

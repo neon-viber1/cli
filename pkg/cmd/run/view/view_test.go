@@ -971,6 +971,28 @@ func TestViewRun(t *testing.T) {
 			wantOut: quuxTheBarfLogOutput,
 		},
 		{
+			name: "noninteractive with log-failed and workflow lookup 404",
+			opts: &ViewOptions{
+				JobID:     "20",
+				LogFailed: true,
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/jobs/20"),
+					httpmock.JSONResponse(shared.FailedJob))
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/1234"),
+					httpmock.JSONResponse(shared.FailedRun))
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/1234/logs"),
+					httpmock.BinaryResponse(zipArchive))
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/workflows/123"),
+					httpmock.StatusStringResponse(404, "not found"))
+			},
+			wantOut: quuxTheBarfLogOutput,
+		},
+		{
 			name: "interactive with run log-failed",
 			tty:  true,
 			opts: &ViewOptions{
