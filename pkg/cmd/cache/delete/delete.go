@@ -41,6 +41,8 @@ func NewCmdDelete(f *cmdutil.Factory, runF func(*DeleteOptions) error) *cobra.Co
 			Delete GitHub Actions caches.
 
 			Deletion requires authorization with the %[1]srepo%[1]s scope.
+
+			A cache key must match exactly; prefixes and wildcards are not supported.
 		`, "`"),
 		Example: heredoc.Doc(`
 			# Delete a cache by id
@@ -156,6 +158,9 @@ func deleteRun(opts *DeleteOptions) error {
 	return deleteCaches(opts, client, repo, toDelete)
 }
 
+// errNoMatchingCache is returned when no cache has exactly the requested key.
+var errNoMatchingCache = errors.New("no cache with matching key")
+
 func deleteCaches(opts *DeleteOptions, client *api.Client, repo ghrepo.Interface, toDelete []string) error {
 	cs := opts.IO.ColorScheme()
 	repoName := ghrepo.FullName(repo)
@@ -173,8 +178,9 @@ func deleteCaches(opts *DeleteOptions, client *api.Client, repo ghrepo.Interface
 		}
 
 		if err != nil {
-			if httpErr, ok := errors.AsType[api.HTTPError](err); ok {
-				if httpErr.StatusCode == http.StatusNotFound {
+			httpErr, isHTTPErr := errors.AsType[api.HTTPError](err)
+			if errors.Is(err, errNoMatchingCache) || isHTTPErr {
+				if errors.Is(err, errNoMatchingCache) || httpErr.StatusCode == http.StatusNotFound {
 					if opts.Ref == "" {
 						err = fmt.Errorf("%s Could not find a cache matching %s in %s", cs.FailureIcon(), cache, repoName)
 					} else {
@@ -209,28 +215,40 @@ func deleteCacheByID(client *api.Client, repo ghrepo.Interface, id int64) error 
 	return client.REST(repo.RepoHost(), "DELETE", path.String(), nil, nil)
 }
 
-// deleteCacheByKey deletes cache entries by given key (and optional ref) and
-// returns the number of deleted entries.
+// deleteCacheByKey deletes cache entries whose key is exactly the given key
+// (and optionally on the given ref) and returns the number of deleted entries.
+//
+// The API's delete-by-key endpoint treats the key as a prefix, so it would also
+// remove unrelated caches such as "foo-123" when asked for "foo". To avoid that,
+// matching caches are listed, filtered for exact key equality, and deleted by ID.
 //
 // Note that a key/ref combination does not necessarily map to a single cache
 // entry. There may be more than one entries with the same key/ref combination,
 // but those entries will have different IDs.
 func deleteCacheByKey(client *api.Client, repo ghrepo.Interface, key, ref string) (int, error) {
-	u, err := safeurl.JoinPath("repos", repo.RepoOwner(), repo.RepoName(), "actions", "caches")
-	if err != nil {
-		return 0, err
-	}
-	u.SetQuery("key", key)
-	if ref != "" {
-		u.SetQuery("ref", ref)
-	}
-	var payload shared.CachePayload
-	err = client.REST(repo.RepoHost(), "DELETE", u.String(), nil, &payload)
+	payload, err := shared.GetCaches(client, repo, shared.GetCachesOptions{Limit: -1, Key: key, Ref: ref})
 	if err != nil {
 		return 0, err
 	}
 
-	return payload.TotalCount, nil
+	var ids []int64
+	if payload != nil {
+		for _, c := range payload.ActionsCaches {
+			if c.Key == key {
+				ids = append(ids, c.Id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return 0, errNoMatchingCache
+	}
+
+	for _, id := range ids {
+		if err := deleteCacheByID(client, repo, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(ids), nil
 }
 
 func parseCacheID(arg string) (int64, bool) {
