@@ -93,6 +93,10 @@ func (s searcher) Code(query Query) (CodeResult, error) {
 		result.Items = append(result.Items, page.Items[:numItemsToAdd]...)
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
 
+		if exhausted(len(page.Items), len(result.Items), page.Total) {
+			break
+		}
+
 		query.Page = nextPage(link)
 		if query.Page == 0 {
 			break
@@ -122,6 +126,10 @@ func (s searcher) Commits(query Query) (CommitsResult, error) {
 		result.Items = append(result.Items, page.Items[:numItemsToAdd]...)
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
 
+		if exhausted(len(page.Items), len(result.Items), page.Total) {
+			break
+		}
+
 		query.Page = nextPage(link)
 		if query.Page == 0 {
 			break
@@ -149,6 +157,10 @@ func (s searcher) Repositories(query Query) (RepositoriesResult, error) {
 		result.Total = page.Total
 		result.Items = append(result.Items, page.Items[:numItemsToAdd]...)
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
+
+		if exhausted(len(page.Items), len(result.Items), page.Total) {
+			break
+		}
 
 		query.Page = nextPage(link)
 		if query.Page == 0 {
@@ -180,6 +192,10 @@ func (s searcher) Issues(query Query) (IssuesResult, error) {
 		result.Total = page.Total
 		result.Items = append(result.Items, page.Items[:numItemsToAdd]...)
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
+
+		if exhausted(len(page.Items), len(result.Items), page.Total) {
+			break
+		}
 
 		if singlePage {
 			break
@@ -338,6 +354,12 @@ func asSearchError(apiErr api.HTTPError) error {
 		})
 	}
 	return searchErr
+}
+
+// exhausted reports whether paging should stop even if the response advertises
+// a next page: an empty page, or every matching result already collected.
+func exhausted(pageItems, collected, total int) bool {
+	return pageItems == 0 || (total > 0 && collected >= total)
 }
 
 // nextPage extracts the next page number from an API response's link header. if
