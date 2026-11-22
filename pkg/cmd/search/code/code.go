@@ -142,8 +142,15 @@ func codeRun(opts *CodeOptions) error {
 	io.StartProgressIndicator()
 	results, err := opts.Searcher.Code(opts.Query)
 	io.StopProgressIndicator()
+	// A rate limit hit part-way through pagination must not discard the pages
+	// already fetched: print them, then still report the original error so the
+	// message and exit status are unchanged for scripts.
+	var searchErr error
 	if err != nil {
-		return err
+		if !search.IsRateLimitError(err) || len(results.Items) == 0 {
+			return err
+		}
+		searchErr = err
 	}
 	if len(results.Items) == 0 && opts.Exporter == nil {
 		return cmdutil.NewNoResultsError("no code results matched your search")
@@ -153,11 +160,16 @@ func codeRun(opts *CodeOptions) error {
 	} else {
 		fmt.Fprintf(io.ErrOut, "failed to start pager: %v\n", err)
 	}
+	var outErr error
 	if opts.Exporter != nil {
-		return opts.Exporter.Write(io, results.Items)
+		outErr = opts.Exporter.Write(io, results.Items)
+	} else {
+		outErr = displayResults(io, results)
 	}
-
-	return displayResults(io, results)
+	if searchErr != nil {
+		return searchErr
+	}
+	return outErr
 }
 
 func displayResults(io *iostreams.IOStreams, results search.CodeResult) error {

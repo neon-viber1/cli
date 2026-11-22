@@ -1384,3 +1384,92 @@ func initialize[T any](start int, stop int, initializer func(i int) T) []T {
 	}
 	return results
 }
+
+func TestSearcherStopsPagingOnEmptyPageOrTotal(t *testing.T) {
+	tests := []struct {
+		name      string
+		call      func(Searcher) (int, error)
+		path      string
+		items     []any
+		total     int
+		wantCalls int
+	}{
+		{
+			name:      "issues empty page with next link",
+			path:      "search/issues",
+			items:     []any{},
+			total:     732,
+			wantCalls: 1,
+			call: func(s Searcher) (int, error) {
+				r, err := s.Issues(Query{Limit: 3})
+				return len(r.Items), err
+			},
+		},
+		{
+			name:      "code empty page with next link",
+			path:      "search/code",
+			items:     []any{},
+			total:     732,
+			wantCalls: 1,
+			call: func(s Searcher) (int, error) {
+				r, err := s.Code(Query{Limit: 1000})
+				return len(r.Items), err
+			},
+		},
+		{
+			name:      "commits all results collected",
+			path:      "search/commits",
+			items:     []any{map[string]any{"sha": "a"}, map[string]any{"sha": "b"}},
+			total:     2,
+			wantCalls: 1,
+			call: func(s Searcher) (int, error) {
+				r, err := s.Commits(Query{Limit: 100})
+				return len(r.Items), err
+			},
+		},
+		{
+			name:      "repositories empty page with next link",
+			path:      "search/repositories",
+			items:     []any{},
+			total:     10,
+			wantCalls: 1,
+			call: func(s Searcher) (int, error) {
+				r, err := s.Repositories(Query{Limit: 100})
+				return len(r.Items), err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if calls > 20 {
+					return nil, fmt.Errorf("too many requests: %d", calls)
+				}
+				res := httpmock.JSONResponse(map[string]any{"total_count": tt.total, "items": tt.items})
+				res = httpmock.WithHeader(res, "Link", `<https://api.github.com/`+tt.path+`?page=`+strconv.Itoa(calls+1)+`&per_page=100&q=x>; rel="next"`)
+				return res(req)
+			})
+			s := NewSearcher(&http.Client{Transport: rt}, "github.com", &fd.DisabledDetectorMock{})
+			_, err := tt.call(s)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCalls, calls)
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestIsRateLimitError(t *testing.T) {
+	reg := &httpmock.Registry{}
+	reg.Register(httpmock.REST("GET", "search/code"),
+		httpmock.WithHeader(httpmock.StatusStringResponse(403, `{"message":"API rate limit exceeded for user ID 1."}`), "Content-Type", "application/json"))
+	s := NewSearcher(&http.Client{Transport: reg}, "github.com", &fd.DisabledDetectorMock{})
+	_, err := s.Code(Query{Kind: KindCode, Limit: 1})
+	require.Error(t, err)
+	assert.True(t, IsRateLimitError(err), "%T %v", err, err)
+	assert.False(t, IsRateLimitError(fmt.Errorf("other")))
+}
