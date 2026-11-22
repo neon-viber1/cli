@@ -229,7 +229,10 @@ func rerunJob(client *api.Client, repo ghrepo.Interface, job *shared.Job, debug 
 	if err != nil {
 		var httpError api.HTTPError
 		if errors.As(err, &httpError) && httpError.StatusCode == 403 {
-			return fmt.Errorf("job %d cannot be rerun", job.ID)
+			if httpError.Message == "" {
+				return fmt.Errorf("job %d cannot be rerun", job.ID)
+			}
+			return fmt.Errorf("job %d cannot be rerun; %s", job.ID, httpError.Message)
 		}
 		return fmt.Errorf("failed to rerun: %w", err)
 	}
