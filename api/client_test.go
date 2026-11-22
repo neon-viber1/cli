@@ -304,6 +304,21 @@ func TestHTTPError_ScopesSuggestion(t *testing.T) {
 			want: ``,
 		},
 		{
+			name: "403 with an accepted scope already held (issue repro)",
+			resp: makeResponse(403, "https://api.github.com/repos/OWNER/REPO/dependabot/alerts", "admin:public_key, admin:repo_hook, gist, read:org, repo", "admin:repo_hook, delete_repo, read:repo_hook, repo, repo:invite, repo:status, repo_deployment, security_events, write:repo_hook"),
+			want: ``,
+		},
+		{
+			name: "held scope covers accepted scope via hierarchy",
+			resp: makeResponse(403, "https://api.github.com/repos/OWNER/REPO/statuses", "repo", "repo:status"),
+			want: ``,
+		},
+		{
+			name: "none held suggests least privileged accepted scope",
+			resp: makeResponse(403, "https://api.github.com/repos/OWNER/REPO/hooks", "gist", "admin:repo_hook, delete_repo, read:repo_hook, repo, write:repo_hook"),
+			want: `This API operation needs the "read:repo_hook" scope. To request it, run:  gh auth refresh -h github.com -s read:repo_hook`,
+		},
+		{
 			name: "http code is 422",
 			resp: makeResponse(422, "https://api.github.com/gists", "", "gist"),
 			want: "",
