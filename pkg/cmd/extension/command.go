@@ -557,6 +557,11 @@ func NewCmdExtension(f *cmdutil.Factory) *cobra.Command {
 			Args:               cobra.MinimumNArgs(1),
 			DisableFlagParsing: true,
 			RunE: func(cmd *cobra.Command, args []string) error {
+				// DisableFlagParsing stops cobra from handling help flags, so only a
+				// leading help flag is handled here. Later arguments belong to the extension.
+				if args[0] == "--help" || args[0] == "-h" {
+					return cmd.Help()
+				}
 				if found, err := m.Dispatch(args, io.In, io.Out, io.ErrOut); !found {
 					return fmt.Errorf("extension %q not found", args[0])
 				} else {

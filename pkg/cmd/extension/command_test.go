@@ -828,6 +828,20 @@ func TestNewCmdExtension(t *testing.T) {
 			errMsg:  `extension "invalid" not found`,
 		},
 		{
+			name: "exec extension forwards --help after name",
+			args: []string{"exec", "test", "--help"},
+			managerStubs: func(em *extensions.ExtensionManagerMock) func(*testing.T) {
+				em.DispatchFunc = func(args []string, stdin io.Reader, stdout, stderr io.Writer) (bool, error) {
+					return true, nil
+				}
+				return func(t *testing.T) {
+					calls := em.DispatchCalls()
+					assert.Equal(t, 1, len(calls))
+					assert.EqualValues(t, []string{"test", "--help"}, calls[0].Args)
+				}
+			},
+		},
+		{
 			name: "exec extension with arguments",
 			args: []string{"exec", "test", "arg1", "arg2", "--flag1"},
 			managerStubs: func(em *extensions.ExtensionManagerMock) func(*testing.T) {
@@ -1191,4 +1205,28 @@ func searchResults(numResults int) any {
 		result["items"] = fewerItems
 	}
 	return result
+}
+
+func TestNewCmdExtension_execHelp(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		t.Run(flag, func(t *testing.T) {
+			ios, _, stdout, _ := iostreams.Test()
+			em := &extensions.ExtensionManagerMock{}
+			f := cmdutil.Factory{
+				IOStreams:        ios,
+				ExtensionManager: em,
+			}
+
+			cmd := NewCmdExtension(&f)
+			cmd.SetArgs([]string{"exec", flag})
+			cmd.SetOut(stdout)
+			cmd.SetErr(io.Discard)
+
+			_, err := cmd.ExecuteC()
+			assert.NoError(t, err)
+			assert.Empty(t, em.DispatchCalls())
+			assert.Contains(t, stdout.String(), "Execute an extension using the short name.")
+			assert.Contains(t, stdout.String(), "exec <name> [args]")
+		})
+	}
 }
