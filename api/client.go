@@ -306,8 +306,7 @@ func UnexpectedStatusError(resp *http.Response) error {
 func handleRequestError(err error, endpointScopes string) error {
 	if endpointScopes != "" {
 		if restErr, ok := errors.AsType[*ghAPI.HTTPError](err); ok && restErr.Headers != nil && restErr.StatusCode >= 400 && restErr.StatusCode < 500 {
-			oldScopes := restErr.Headers.Get("X-Accepted-Oauth-Scopes")
-			restErr.Headers.Set("X-Accepted-Oauth-Scopes", fmt.Sprintf("%s, %s", oldScopes, endpointScopes))
+			restErr.Headers.Set("X-Accepted-Oauth-Scopes", endpointScopes)
 		}
 	}
 	return handleResponse(err)
@@ -353,8 +352,9 @@ func ScopesSuggestion(resp *http.Response) string {
 // OAuth scopes they need.
 func EndpointNeedsScopes(resp *http.Response, s string) {
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-		oldScopes := resp.Header.Get("X-Accepted-Oauth-Scopes")
-		resp.Header.Set("X-Accepted-Oauth-Scopes", fmt.Sprintf("%s, %s", oldScopes, s))
+		// The scopes named here are hard requirements of the endpoint, so they replace the
+		// server-reported list, which is a set of alternatives where any one is sufficient.
+		resp.Header.Set("X-Accepted-Oauth-Scopes", s)
 	}
 }
 
@@ -395,19 +395,51 @@ func generateScopesSuggestion(statusCode int, endpointNeedsScopes, tokenHasScope
 		}
 	}
 
+	// X-Accepted-Oauth-Scopes lists alternatives: holding any one of them satisfies the endpoint.
+	// A failure is only attributable to scopes when the token holds none of them.
+	var missing []string
 	for s := range strings.SplitSeq(endpointNeedsScopes, ",") {
 		s = strings.TrimSpace(s)
-		if _, gotScope := gotScopes[s]; s == "" || gotScope {
+		if s == "" {
 			continue
 		}
-		return fmt.Sprintf(
-			"This API operation needs the %[1]q scope. To request it, run:  gh auth refresh -h %[2]s -s %[1]s",
-			s,
-			ghauth.NormalizeHostname(hostname),
-		)
+		if _, gotScope := gotScopes[s]; gotScope {
+			return ""
+		}
+		missing = append(missing, s)
+	}
+	if len(missing) == 0 {
+		return ""
 	}
 
-	return ""
+	// Suggest the least privileged alternative.
+	best := missing[0]
+	for _, s := range missing[1:] {
+		if scopeRank(s) < scopeRank(best) {
+			best = s
+		}
+	}
+
+	return fmt.Sprintf(
+		"This API operation needs the %[1]q scope. To request it, run:  gh auth refresh -h %[2]s -s %[1]s",
+		best,
+		ghauth.NormalizeHostname(hostname),
+	)
+}
+
+// scopeRank orders scopes from least to most privileged for choosing which accepted scope to suggest.
+// Ties keep the order reported by the server.
+func scopeRank(s string) int {
+	switch {
+	case strings.HasPrefix(s, "read:"):
+		return 0
+	case strings.HasPrefix(s, "write:"):
+		return 2
+	case strings.HasPrefix(s, "admin:"), s == "delete_repo", s == "repo", s == "user", s == "delete_packages":
+		return 3
+	default:
+		return 1
+	}
 }
 
 func clientOptions(hostname string, transport http.RoundTripper) ghAPI.ClientOptions {
