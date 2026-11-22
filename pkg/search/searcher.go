@@ -93,6 +93,10 @@ func (s searcher) Code(query Query) (CodeResult, error) {
 		result.Items = append(result.Items, page.Items[:numItemsToAdd]...)
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
 
+		if len(page.Items) == 0 || len(result.Items) >= page.Total {
+			break
+		}
+
 		query.Page = nextPage(link)
 		if query.Page == 0 {
 			break
@@ -122,6 +126,10 @@ func (s searcher) Commits(query Query) (CommitsResult, error) {
 		result.Items = append(result.Items, page.Items[:numItemsToAdd]...)
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
 
+		if len(page.Items) == 0 || len(result.Items) >= page.Total {
+			break
+		}
+
 		query.Page = nextPage(link)
 		if query.Page == 0 {
 			break
@@ -149,6 +157,10 @@ func (s searcher) Repositories(query Query) (RepositoriesResult, error) {
 		result.Total = page.Total
 		result.Items = append(result.Items, page.Items[:numItemsToAdd]...)
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
+
+		if len(page.Items) == 0 || len(result.Items) >= page.Total {
+			break
+		}
 
 		query.Page = nextPage(link)
 		if query.Page == 0 {
@@ -182,6 +194,10 @@ func (s searcher) Issues(query Query) (IssuesResult, error) {
 		numItemsToRetrieve = numItemsToRetrieve - numItemsToAdd
 
 		if singlePage {
+			break
+		}
+
+		if len(page.Items) == 0 || len(result.Items) >= page.Total {
 			break
 		}
 
