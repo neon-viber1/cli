@@ -1384,3 +1384,72 @@ func initialize[T any](start int, stop int, initializer func(i int) T) []T {
 	}
 	return results
 }
+
+func TestSearcherPaginationTermination(t *testing.T) {
+	type call func(s Searcher, q Query) (int, error)
+	kinds := []struct {
+		kind string
+		call call
+	}{
+		{KindCode, func(s Searcher, q Query) (int, error) { r, err := s.Code(q); return len(r.Items), err }},
+		{KindCommits, func(s Searcher, q Query) (int, error) { r, err := s.Commits(q); return len(r.Items), err }},
+		{KindRepositories, func(s Searcher, q Query) (int, error) { r, err := s.Repositories(q); return len(r.Items), err }},
+		{KindIssues, func(s Searcher, q Query) (int, error) { r, err := s.Issues(q); return len(r.Items), err }},
+	}
+
+	items := func(n int) []any {
+		out := make([]any, n)
+		for i := range out {
+			out[i] = map[string]any{}
+		}
+		return out
+	}
+
+	tests := []struct {
+		name         string
+		total        int
+		pageSize     int
+		limit        int
+		pagesWithAny int // pages that contain items; later pages are empty
+		wantRequests int
+		wantItems    int
+	}{
+		{name: "full pages up to the limit make exactly ten requests", total: 5000, pageSize: 100, limit: 1000, pagesWithAny: 100, wantRequests: 10, wantItems: 1000},
+		{name: "stops on an empty page even if total suggests more", total: 732, pageSize: 3, limit: 3000, pagesWithAny: 0, wantRequests: 1, wantItems: 0},
+		{name: "stops once total is collected", total: 150, pageSize: 100, limit: 1000, pagesWithAny: 100, wantRequests: 2, wantItems: 150},
+	}
+
+	for _, k := range kinds {
+		for _, tt := range tests {
+			t.Run(k.kind+"/"+tt.name, func(t *testing.T) {
+				requests := 0
+				rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					requests++
+					page, _ := strconv.Atoi(req.URL.Query().Get("page"))
+					n := 0
+					if page <= tt.pagesWithAny {
+						n = min(tt.pageSize, tt.total-(page-1)*tt.pageSize)
+					}
+					res, err := httpmock.JSONResponse(map[string]any{
+						"total_count": tt.total,
+						"items":       items(n),
+					})(req)
+					if err != nil {
+						return nil, err
+					}
+					res.Header.Set("Link", fmt.Sprintf(`<https://api.github.com/search/%s?page=%d>; rel="next"`, k.kind, page+1))
+					return res, nil
+				})
+				s := NewSearcher(&http.Client{Transport: rt}, "github.com", fd.AdvancedIssueSearchSupportedAsOnlyBackend())
+				got, err := k.call(s, Query{Kind: k.kind, Keywords: []string{"apples"}, Limit: tt.limit})
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantRequests, requests)
+				assert.Equal(t, tt.wantItems, got)
+			})
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
