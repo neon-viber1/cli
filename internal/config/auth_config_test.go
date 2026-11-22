@@ -1165,3 +1165,60 @@ func TestAPIHostForHost(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenForUserPrefersProfileConfigTokenOverStaleKeyring(t *testing.T) {
+	authCfg := newTestAuthConfig(t)
+	require.NoError(t, keyring.Set(keyringServiceName("github.com"), "test-user", "stale-keyring"))
+
+	// An insecure login (or refresh) for the same user writes only the profile config token
+	_, err := authCfg.Login("github.com", "test-user", "fresh-config", "https", false)
+	require.NoError(t, err)
+
+	cred, err := authCfg.TokenForUser("github.com", "test-user")
+	require.NoError(t, err)
+	require.Equal(t, "fresh-config", cred.Token)
+	require.Equal(t, gh.TokenSourceOAuthToken, cred.Source)
+
+	// The active token agrees, and the keyring entry is left untouched
+	require.Equal(t, "fresh-config", authCfg.ActiveToken("github.com").Token)
+	stale, err := keyring.Get(keyringServiceName("github.com"), "test-user")
+	require.NoError(t, err)
+	require.Equal(t, "stale-keyring", stale)
+}
+
+func TestTokenForUserSecureLoginSupersedesConfigToken(t *testing.T) {
+	authCfg := newTestAuthConfig(t)
+	_, err := authCfg.Login("github.com", "test-user", "config-token", "https", false)
+	require.NoError(t, err)
+	_, err = authCfg.Login("github.com", "test-user", "keyring-token", "https", true)
+	require.NoError(t, err)
+
+	cred, err := authCfg.TokenForUser("github.com", "test-user")
+	require.NoError(t, err)
+	require.Equal(t, "keyring-token", cred.Token)
+	require.Equal(t, gh.TokenSourceKeyring, cred.Source)
+}
+
+func TestTokenForUserKeyringOnly(t *testing.T) {
+	authCfg := newTestAuthConfig(t)
+	require.NoError(t, keyring.Set(keyringServiceName("github.com"), "test-user", "keyring-only"))
+
+	cred, err := authCfg.TokenForUser("github.com", "test-user")
+	require.NoError(t, err)
+	require.Equal(t, "keyring-only", cred.Token)
+	require.Equal(t, gh.TokenSourceKeyring, cred.Source)
+}
+
+func TestSwitchUserAgreesWithTokenForUserInMixedState(t *testing.T) {
+	authCfg := newTestAuthConfig(t)
+	require.NoError(t, keyring.Set(keyringServiceName("github.com"), "test-user", "stale-keyring"))
+	_, err := authCfg.Login("github.com", "test-user", "fresh-config", "https", false)
+	require.NoError(t, err)
+
+	require.NoError(t, authCfg.SwitchUser("github.com", "test-user"))
+
+	want, err := authCfg.TokenForUser("github.com", "test-user")
+	require.NoError(t, err)
+	require.Equal(t, want.Token, authCfg.ActiveToken("github.com").Token)
+	require.Equal(t, "fresh-config", want.Token)
+}
