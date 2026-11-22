@@ -644,7 +644,7 @@ func Test_createRun(t *testing.T) {
 					}))
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register("git show-ref --verify -- HEAD refs/remotes/origin/feature", 1, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
@@ -691,7 +691,7 @@ func Test_createRun(t *testing.T) {
 					}))
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register("git show-ref --verify -- HEAD refs/remotes/origin/feature", 1, "")
 			},
@@ -755,7 +755,7 @@ func Test_createRun(t *testing.T) {
 					}))
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
@@ -803,7 +803,7 @@ func Test_createRun(t *testing.T) {
 					}))
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
@@ -856,7 +856,7 @@ func Test_createRun(t *testing.T) {
 					}))
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 1, "")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 1, "")
 				cs.Register("git config remote.pushDefault", 1, "")
 				cs.Register("git config push.default", 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
@@ -918,7 +918,7 @@ func Test_createRun(t *testing.T) {
 					}))
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/feature")
 				cs.Register("git show-ref --verify -- HEAD refs/remotes/origin/feature", 0, heredoc.Doc(`
 				deadbeef HEAD
 				deadbeef refs/remotes/origin/feature`))
@@ -955,7 +955,7 @@ func Test_createRun(t *testing.T) {
 			branch.feature.remote origin
 			branch.feature.merge refs/heads/my-feat2
 		`))
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/my-feat2")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/my-feat2")
 				cs.Register("git show-ref --verify -- HEAD refs/remotes/origin/my-feat2", 0, heredoc.Doc(`
 			deadbeef HEAD
 			deadbeef refs/remotes/origin/my-feat2
@@ -1145,7 +1145,7 @@ func Test_createRun(t *testing.T) {
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
 				cs.Register(`git( .+)? log( .+)? origin/master\.\.\.feature`, 0, "")
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
@@ -1179,7 +1179,7 @@ func Test_createRun(t *testing.T) {
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
 				cs.Register(`git( .+)? log( .+)? origin/master\.\.\.feature`, 0, "")
-				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/feature", 0, "refs/heads/feature refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
@@ -1574,7 +1574,7 @@ func Test_createRun(t *testing.T) {
 					branch.task1.remote origin
 					branch.task1.merge refs/heads/task1
 					branch.task1.gh-merge-base feature/feat2`)) // ReadBranchConfig
-				cs.Register("git rev-parse --symbolic-full-name task1@{push}", 0, "refs/remotes/origin/task1")
+				cs.Register("git for-each-ref --format=%\\(refname\\) %\\(push\\) refs/heads/task1", 0, "refs/heads/task1 refs/remotes/origin/task1")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/task1`, 0, heredoc.Doc(`
 					deadbeef HEAD
 					deadbeef refs/remotes/origin/task1`))
@@ -2645,7 +2645,7 @@ func TestRemoteGuessing(t *testing.T) {
 
 	cs.Register(`git status --porcelain`, 0, "")
 	cs.Register(`git config --get-regexp \^branch\\\..+\\\.\(remote\|merge\|pushremote\|gh-merge-base\)\$`, 0, "")
-	cs.Register(`git rev-parse --symbolic-full-name feature@{push}`, 1, "")
+	cs.Register(`git for-each-ref --format=%\(refname\) %\(push\) refs/heads/feature`, 1, "")
 	cs.Register("git config remote.pushDefault", 1, "")
 	cs.Register("git config push.default", 1, "")
 
@@ -2732,7 +2732,7 @@ func TestNoRepoCanBeDetermined(t *testing.T) {
 
 	cs.Register(`git status --porcelain`, 0, "")
 	cs.Register(`git config --get-regexp \^branch\\\..+\\\.\(remote\|merge\|pushremote\|gh-merge-base\)\$`, 0, "")
-	cs.Register(`git rev-parse --symbolic-full-name feature@{push}`, 1, "")
+	cs.Register(`git for-each-ref --format=%\(refname\) %\(push\) refs/heads/feature`, 1, "")
 	cs.Register("git config remote.pushDefault", 1, "")
 	cs.Register("git config push.default", 1, "")
 

@@ -627,26 +627,50 @@ func ParseRemoteTrackingRef(s string) (RemoteTrackingRef, error) {
 	}, nil
 }
 
-// PushRevision gets the value of the @{push} revision syntax
-// An error here doesn't necessarily mean something is broken, but may mean that the @{push}
-// revision syntax couldn't be resolved, such as in non-centralized workflows with
+// PushRevision resolves the remote tracking ref that a branch would be pushed to, which is
+// the value of the @{push} revision syntax.
+//
+// It queries `for-each-ref --format=%(push)` rather than `rev-parse <branch>@{push}` because
+// the latter passes braces as a command line argument. A git built against Cygwin expands
+// braces while parsing its command line, turning the argument into "<branch>@push". Quoting
+// is not an option because other platforms would receive the quotes literally.
+//
+// An error here doesn't necessarily mean something is broken, but may mean that the push
+// target couldn't be resolved, such as in non-centralized workflows with
 // push.default = simple. Downstream consumers should consider how to handle this error.
 func (c *Client) PushRevision(ctx context.Context, branch string) (RemoteTrackingRef, error) {
-	revParseOut, err := c.revParse(ctx, "--symbolic-full-name", branch+"@{push}")
+	refName := "refs/heads/" + branch
+	args := []string{"for-each-ref", "--format=%(refname) %(push)", refName}
+	cmd, err := c.Command(ctx, args...)
+	if err != nil {
+		return RemoteTrackingRef{}, err
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return RemoteTrackingRef{}, err
 	}
 
-	return parsePushRevision(revParseOut)
+	return parsePushRevision(out, refName)
 }
 
-func parsePushRevision(revParseOut []byte) (RemoteTrackingRef, error) {
-	ref, err := ParseRemoteTrackingRef(firstLine(revParseOut))
-	if err != nil {
-		return RemoteTrackingRef{}, fmt.Errorf("could not parse push revision: %v", err)
+// parsePushRevision finds refName in for-each-ref output of "<refname> <push>" lines. The ref
+// pattern also matches refs nested below it (feat/x for feat), so the line is chosen by exact name.
+func parsePushRevision(forEachRefOut []byte, refName string) (RemoteTrackingRef, error) {
+	for _, line := range outputLines(forEachRefOut) {
+		name, push, _ := strings.Cut(line, " ")
+		if name != refName {
+			continue
+		}
+		if push == "" {
+			return RemoteTrackingRef{}, fmt.Errorf("could not parse push revision: no push target for %s", refName)
+		}
+		ref, err := ParseRemoteTrackingRef(push)
+		if err != nil {
+			return RemoteTrackingRef{}, fmt.Errorf("could not parse push revision: %v", err)
+		}
+		return ref, nil
 	}
-
-	return ref, nil
+	return RemoteTrackingRef{}, fmt.Errorf("could not parse push revision: branch not found: %s", refName)
 }
 
 func (c *Client) DeleteLocalTag(ctx context.Context, tag string) error {
