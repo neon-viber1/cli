@@ -310,7 +310,7 @@ func Test_edit_editorFailureKeepsEditedText(t *testing.T) {
 
 	data, readErr := os.ReadFile(path)
 	assert.NoError(t, readErr)
-	assert.Equal(t, "initial value - added by vim", string(data))
+	assert.Equal(t, "initial value - added by vim", string(bytes.TrimPrefix(data, bom)))
 }
 
 func Test_edit_editorFailureWithoutChangesDiscardsFile(t *testing.T) {
