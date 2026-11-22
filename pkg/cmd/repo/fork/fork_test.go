@@ -246,8 +246,9 @@ func TestRepoFork(t *testing.T) {
 			httpStubs: forkPost,
 			execStubs: func(cs *run.CommandStubber) {
 				cs.Register(`git remote add fork https://github\.com/someone/REPO\.git`, 0, "")
+				cs.Register(`git config --add remote.origin.gh-resolved base`, 0, "")
 			},
-			wantErrOut: "✓ Created fork someone/REPO\n✓ Added remote fork\n",
+			wantErrOut: "✓ Created fork someone/REPO\n✓ Added remote fork\n! Repository OWNER/REPO set as the default repository. To learn more about the default repository, run: gh repo set-default --help\n",
 		},
 		{
 			name: "implicit match, no configured protocol",
@@ -267,8 +268,9 @@ func TestRepoFork(t *testing.T) {
 			httpStubs: forkPost,
 			execStubs: func(cs *run.CommandStubber) {
 				cs.Register(`git remote add fork git@github\.com:someone/REPO\.git`, 0, "")
+				cs.Register(`git config --add remote.origin.gh-resolved base`, 0, "")
 			},
-			wantErrOut: "✓ Created fork someone/REPO\n✓ Added remote fork\n",
+			wantErrOut: "✓ Created fork someone/REPO\n✓ Added remote fork\n! Repository OWNER/REPO set as the default repository. To learn more about the default repository, run: gh repo set-default --help\n",
 		},
 		{
 			name: "implicit with negative interactive choices",
@@ -298,13 +300,14 @@ func TestRepoFork(t *testing.T) {
 			execStubs: func(cs *run.CommandStubber) {
 				cs.Register("git remote rename origin upstream", 0, "")
 				cs.Register(`git remote add origin https://github.com/someone/REPO.git`, 0, "")
+				cs.Register(`git config --add remote.upstream.gh-resolved base`, 0, "")
 			},
 			promptStubs: func(pm *prompter.MockPrompter) {
 				pm.RegisterConfirm("Would you like to add a remote for the fork?", func(_ string, _ bool) (bool, error) {
 					return true, nil
 				})
 			},
-			wantErrOut: "✓ Created fork someone/REPO\n✓ Renamed remote origin to upstream\n✓ Added remote origin\n",
+			wantErrOut: "✓ Created fork someone/REPO\n✓ Renamed remote origin to upstream\n✓ Added remote origin\n! Repository OWNER/REPO set as the default repository. To learn more about the default repository, run: gh repo set-default --help\n",
 		},
 		{
 			name: "implicit tty reuse existing remote",
@@ -375,8 +378,9 @@ func TestRepoFork(t *testing.T) {
 			execStubs: func(cs *run.CommandStubber) {
 				cs.Register("git remote rename origin upstream", 0, "")
 				cs.Register(`git remote add origin https://github.com/someone/REPO.git`, 0, "")
+				cs.Register(`git config --add remote.upstream.gh-resolved base`, 0, "")
 			},
-			wantErrOut: "✓ Created fork someone/REPO\n✓ Renamed remote origin to upstream\n✓ Added remote origin\n",
+			wantErrOut: "✓ Created fork someone/REPO\n✓ Renamed remote origin to upstream\n✓ Added remote origin\n! Repository OWNER/REPO set as the default repository. To learn more about the default repository, run: gh repo set-default --help\n",
 		},
 		{
 			name: "implicit nontty reuse existing remote",
@@ -420,6 +424,86 @@ func TestRepoFork(t *testing.T) {
 			wantErrOut: "someone/REPO already exists\n",
 		},
 		{
+			name: "implicit tty --remote sets default when only remote is upstream",
+			tty:  true,
+			opts: &ForkOptions{
+				Remote:     true,
+				RemoteName: defaultRemoteName,
+				Rename:     true,
+			},
+			remotes: []*context.Remote{
+				{
+					Remote: &git.Remote{Name: "upstream", FetchURL: &url.URL{}},
+					Repo:   ghrepo.New("OWNER", "REPO"),
+				},
+			},
+			httpStubs: forkPost,
+			execStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git remote add origin https://github.com/someone/REPO.git`, 0, "")
+				cs.Register(`git config --add remote.upstream.gh-resolved base`, 0, "")
+			},
+			wantErrOut: "✓ Created fork someone/REPO\n✓ Added remote origin\n! Repository OWNER/REPO set as the default repository. To learn more about the default repository, run: gh repo set-default --help\n",
+		},
+		{
+			name: "implicit nontty --remote sets default without notice",
+			opts: &ForkOptions{
+				Remote:     true,
+				RemoteName: defaultRemoteName,
+				Rename:     true,
+			},
+			remotes: []*context.Remote{
+				{
+					Remote: &git.Remote{Name: "upstream", FetchURL: &url.URL{}},
+					Repo:   ghrepo.New("OWNER", "REPO"),
+				},
+			},
+			httpStubs: forkPost,
+			execStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git remote add origin https://github.com/someone/REPO.git`, 0, "")
+				cs.Register(`git config --add remote.upstream.gh-resolved base`, 0, "")
+			},
+			wantOut: "https://github.com/someone/REPO\n",
+		},
+		{
+			name: "implicit --remote does not override an existing default",
+			opts: &ForkOptions{
+				Remote:     true,
+				RemoteName: defaultRemoteName,
+				Rename:     true,
+			},
+			remotes: []*context.Remote{
+				{
+					Remote: &git.Remote{Name: "origin", FetchURL: &url.URL{}, Resolved: "base"},
+					Repo:   ghrepo.New("OWNER", "REPO"),
+				},
+			},
+			httpStubs: forkPost,
+			execStubs: func(cs *run.CommandStubber) {
+				cs.Register("git remote rename origin upstream", 0, "")
+				cs.Register(`git remote add origin https://github.com/someone/REPO.git`, 0, "")
+			},
+			wantOut: "https://github.com/someone/REPO\n",
+		},
+		{
+			name: "implicit --remote with custom remote name sets default on original remote",
+			opts: &ForkOptions{
+				Remote:     true,
+				RemoteName: "fork",
+			},
+			remotes: []*context.Remote{
+				{
+					Remote: &git.Remote{Name: "origin", FetchURL: &url.URL{}},
+					Repo:   ghrepo.New("OWNER", "REPO"),
+				},
+			},
+			httpStubs: forkPost,
+			execStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git remote add fork https://github.com/someone/REPO.git`, 0, "")
+				cs.Register(`git config --add remote.origin.gh-resolved base`, 0, "")
+			},
+			wantOut: "https://github.com/someone/REPO\n",
+		},
+		{
 			name: "implicit nontty --remote",
 			opts: &ForkOptions{
 				Remote:     true,
@@ -430,6 +514,7 @@ func TestRepoFork(t *testing.T) {
 			execStubs: func(cs *run.CommandStubber) {
 				cs.Register("git remote rename origin upstream", 0, "")
 				cs.Register(`git remote add origin https://github.com/someone/REPO.git`, 0, "")
+				cs.Register(`git config --add remote.upstream.gh-resolved base`, 0, "")
 			},
 			wantOut: "https://github.com/someone/REPO\n",
 		},
