@@ -2008,3 +2008,54 @@ func Test_apiRun_acceptHeader(t *testing.T) {
 		})
 	}
 }
+
+func Test_apiRun_malformedErrorBody(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		contentTyp string
+		requestID  string
+		wantStdout string
+		wantStderr string
+	}{
+		{name: "empty body GET", method: "GET", contentTyp: "application/json", requestID: "ABCD:1234", wantStderr: "gh: HTTP 500\nRequest ID: ABCD:1234\n"},
+		{name: "empty body POST", method: "POST", contentTyp: "application/json", wantStderr: "gh: HTTP 500\n"},
+		{name: "truncated body", method: "GET", body: `{"mess`, contentTyp: "application/json", requestID: "ABCD:1234", wantStdout: `{"mess`, wantStderr: "gh: HTTP 500\nRequest ID: ABCD:1234\n"},
+		{name: "valid JSON error", method: "GET", body: `{"message":"boom"}`, contentTyp: "application/json", wantStdout: `{"message":"boom"}`, wantStderr: "gh: boom (HTTP 500)\n"},
+		{name: "valid JSON error with request id", method: "GET", body: `{"message":"boom"}`, contentTyp: "application/json", requestID: "X1", wantStdout: `{"message":"boom"}`, wantStderr: "gh: boom (HTTP 500)\nRequest ID: X1\n"},
+		{name: "non-JSON error", method: "GET", body: `oops`, contentTyp: "text/plain", wantStdout: "oops", wantStderr: "gh: HTTP 500\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ios, _, stdout, stderr := iostreams.Test()
+			err := apiRun(&ApiOptions{
+				IO: ios,
+				Config: func() (gh.Config, error) {
+					return config.NewMockConfig(), nil
+				},
+				HttpClient: func(rootapi.HTTPClientOptions) (*http.Client, error) {
+					var tr roundTripper = func(req *http.Request) (*http.Response, error) {
+						h := http.Header{"Content-Type": []string{tt.contentTyp}}
+						if tt.requestID != "" {
+							h.Set("X-Github-Request-Id", tt.requestID)
+						}
+						return &http.Response{
+							StatusCode: 500,
+							Request:    req,
+							Header:     h,
+							Body:       io.NopCloser(strings.NewReader(tt.body)),
+						}, nil
+					}
+					return &http.Client{Transport: tr}, nil
+				},
+				RequestPath:         "repos/o/r/statuses/abc",
+				RequestMethod:       tt.method,
+				RequestMethodPassed: true,
+			})
+			assert.ErrorIs(t, err, cmdutil.SilentError)
+			assert.Equal(t, tt.wantStdout, stdout.String())
+			assert.Equal(t, tt.wantStderr, stderr.String())
+		})
+	}
+}

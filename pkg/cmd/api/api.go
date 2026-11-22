@@ -500,6 +500,12 @@ func processResponse(resp *http.Response, opts *ApiOptions, bodyWriter, headersW
 	if isJSON && (opts.RequestPath == "graphql" || resp.StatusCode >= 400) {
 		if !strings.EqualFold(opts.RequestMethod, "HEAD") {
 			responseBody, serverError, err = parseErrorResponse(responseBody, resp.StatusCode)
+			if errors.Is(err, errMalformedErrorBody) && resp.StatusCode >= 400 {
+				// An empty or truncated error body must not hide the HTTP status:
+				// emit the body as-is and fall through to the generic status error.
+				err = nil
+				isJSON = false
+			}
 			if err != nil {
 				return
 			}
@@ -562,6 +568,9 @@ func processResponse(resp *http.Response, opts *ApiOptions, bodyWriter, headersW
 	}
 	if serverError != "" {
 		fmt.Fprintf(opts.IO.ErrOut, "gh: %s\n", serverError)
+		if id := resp.Header.Get("X-Github-Request-Id"); id != "" && resp.StatusCode >= 400 {
+			fmt.Fprintf(opts.IO.ErrOut, "Request ID: %s\n", id)
+		}
 		if msg := api.ScopesSuggestion(resp); msg != "" {
 			fmt.Fprintf(opts.IO.ErrOut, "gh: %s\n", msg)
 		}
@@ -659,6 +668,9 @@ func openUserFile(fn string, stdin io.ReadCloser) (io.ReadCloser, int64, error) 
 	return r, s.Size(), nil
 }
 
+// errMalformedErrorBody marks a response body that could not be parsed as JSON.
+var errMalformedErrorBody = errors.New("malformed JSON error body")
+
 func parseErrorResponse(r io.Reader, statusCode int) (io.Reader, string, error) {
 	bodyCopy := &bytes.Buffer{}
 	b, err := io.ReadAll(io.TeeReader(r, bodyCopy))
@@ -672,7 +684,7 @@ func parseErrorResponse(r io.Reader, statusCode int) (io.Reader, string, error) 
 	}
 	err = json.Unmarshal(b, &parsedBody)
 	if err != nil {
-		return bodyCopy, "", err
+		return bodyCopy, "", fmt.Errorf("%w: %w", errMalformedErrorBody, err)
 	}
 
 	if len(parsedBody.Errors) > 0 && parsedBody.Errors[0] == '"' {
