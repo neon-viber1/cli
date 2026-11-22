@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/v2/api"
@@ -191,7 +190,7 @@ func syncRemoteRepo(opts *SyncOptions) error {
 	}
 
 	opts.IO.StartProgressIndicator()
-	baseBranchLabel, err := executeRemoteRepoSync(apiClient, destRepo, srcRepo, opts)
+	baseBranchLabel, destBranch, err := executeRemoteRepoSync(apiClient, destRepo, srcRepo, opts)
 	opts.IO.StopProgressIndicator()
 	if err != nil {
 		if errors.Is(err, divergingError) {
@@ -202,14 +201,10 @@ func syncRemoteRepo(opts *SyncOptions) error {
 
 	if opts.IO.IsStdoutTTY() {
 		cs := opts.IO.ColorScheme()
-		branchName := opts.Branch
-		if _, after, ok := strings.Cut(baseBranchLabel, ":"); ok {
-			branchName = after
-		}
 		fmt.Fprintf(opts.IO.Out, "%s Synced the \"%s:%s\" branch from \"%s\"\n",
 			cs.SuccessIcon(),
 			destRepo.RepoOwner(),
-			branchName,
+			destBranch,
 			baseBranchLabel)
 	}
 
@@ -288,36 +283,39 @@ func executeLocalRepoSync(srcRepo ghrepo.Interface, remote string, opts *SyncOpt
 // endpoint allows us to sync repositories that are not fast-forward merge compatible. Additionally,
 // the git references API endpoint gives more detailed error responses as to why the sync failed.
 // Unless the --force flag is specified we will not perform non-fast-forward merges.
-func executeRemoteRepoSync(client *api.Client, destRepo, srcRepo ghrepo.Interface, opts *SyncOptions) (string, error) {
+//
+// It returns the source branch label and the name of the destination branch that was synced.
+// The destination branch is not derived from the source label because the two can differ.
+func executeRemoteRepoSync(client *api.Client, destRepo, srcRepo ghrepo.Interface, opts *SyncOptions) (string, string, error) {
 	branchName := opts.Branch
 	if branchName == "" {
 		var err error
 		branchName, err = api.RepoDefaultBranch(client, destRepo)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
 	if baseBranch, err := triggerUpstreamMerge(client, destRepo, branchName); err == nil {
-		return baseBranch, nil
+		return baseBranch, branchName, nil
 	} else if _, ok := errors.AsType[upstreamMergeErr](err); !ok {
-		return "", err
+		return "", "", err
 	}
 
 	if srcRepo == nil {
 		var err error
 		srcRepo, err = api.RepoParent(client, destRepo)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if srcRepo == nil {
-			return "", fmt.Errorf("can't determine source repository for %s because repository is not fork", ghrepo.FullName(destRepo))
+			return "", "", fmt.Errorf("can't determine source repository for %s because repository is not fork", ghrepo.FullName(destRepo))
 		}
 	}
 
 	commit, err := latestCommit(client, srcRepo, branchName)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// Using string comparison is a brittle way to determine the error returned by the API
@@ -328,13 +326,13 @@ func executeRemoteRepoSync(client *api.Client, destRepo, srcRepo ghrepo.Interfac
 		if httpErr, ok := errors.AsType[api.HTTPError](err); ok {
 			switch httpErr.Message {
 			case notFastForwardErrorMessage:
-				return "", divergingError
+				return "", "", divergingError
 			case branchDoesNotExistErrorMessage:
-				return "", fmt.Errorf("%s branch does not exist on %s repository", branchName, ghrepo.FullName(destRepo))
+				return "", "", fmt.Errorf("%s branch does not exist on %s repository", branchName, ghrepo.FullName(destRepo))
 			}
 		}
-		return "", err
+		return "", "", err
 	}
 
-	return fmt.Sprintf("%s:%s", srcRepo.RepoOwner(), branchName), nil
+	return fmt.Sprintf("%s:%s", srcRepo.RepoOwner(), branchName), branchName, nil
 }
