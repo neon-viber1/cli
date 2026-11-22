@@ -875,11 +875,45 @@ func codesignBinary(binPath string) error {
 //
 // This could change over time as other functionality is added to extensions, which we cannot predict within cli/cli#9934,
 // such as extension manifest and lock files within cli/cli#6118.
+//
+// On Windows, go-gh resolves both the state and data directories to the same folder, so the update directory is the
+// installed extension itself. In that case only the state file gh owns is removed; deleting the folder would destroy
+// manifest.yml and fail on files in use, leaving a broken installation.
 func (m *Manager) cleanExtensionUpdateDir(name string) error {
-	if err := os.RemoveAll(m.UpdateDir(name)); err != nil {
+	updateDir := m.UpdateDir(name)
+	if pathsOverlap(updateDir, filepath.Join(m.installDir(), normalizeExtension(name))) {
+		if err := os.Remove(filepath.Join(updateDir, updateStateFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to remove previous extension update state: %w", err)
+		}
+		return nil
+	}
+	if err := os.RemoveAll(updateDir); err != nil {
 		return fmt.Errorf("failed to remove previous extension update state: %w", err)
 	}
 	return nil
+}
+
+// updateStateFileName is the update-check state file kept in an extension's update directory.
+// It must match the file name used by internal/update.
+const updateStateFileName = "state.yml"
+
+// pathsOverlap reports whether the two paths are the same or one contains the other.
+// Comparison is case-insensitive on Windows, whose file system is case-insensitive.
+func pathsOverlap(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		a, b = strings.ToLower(a), strings.ToLower(b)
+	}
+	return isWithin(a, b) || isWithin(b, a)
+}
+
+// isWithin reports whether target is dir or lies beneath it.
+func isWithin(dir, target string) bool {
+	if dir == target {
+		return true
+	}
+	rel, err := filepath.Rel(dir, target)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // normalizeExtension makes sure that the provided extension name is prefixed with "gh-".
