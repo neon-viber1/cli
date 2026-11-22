@@ -153,6 +153,48 @@ func TestCodeRun(t *testing.T) {
 		wantBrowse string
 	}{
 		{
+			name: "displays results without text matches notty",
+			opts: &CodeOptions{
+				Query: query,
+				Searcher: &search.SearcherMock{
+					CodeFunc: func(query search.Query) (search.CodeResult, error) {
+						return search.CodeResult{
+							Items: []search.Code{
+								{Path: "a/main.c", Repository: search.Repository{FullName: "o/a"}},
+								{
+									Path:       "b/main.c",
+									Repository: search.Repository{FullName: "o/b"},
+									TextMatches: []search.TextMatch{
+										{Fragment: "int main", Matches: []search.Match{{Text: "main", Indices: []int{4, 8}}}},
+									},
+								},
+							},
+							Total: 2,
+						}, nil
+					},
+				},
+			},
+			wantStdout: "o/a:a/main.c\no/b:b/main.c: int main\n",
+		},
+		{
+			name: "displays results without text matches tty",
+			opts: &CodeOptions{
+				Query: query,
+				Searcher: &search.SearcherMock{
+					CodeFunc: func(query search.Query) (search.CodeResult, error) {
+						return search.CodeResult{
+							Items: []search.Code{
+								{Path: "a/main.c", Repository: search.Repository{FullName: "o/a"}},
+							},
+							Total: 1,
+						}, nil
+					},
+				},
+			},
+			tty:        true,
+			wantStdout: "\nShowing 1 of 1 results\n\no/a a/main.c\n",
+		},
+		{
 			name: "displays results tty",
 			opts: &CodeOptions{
 				Query: query,
