@@ -689,6 +689,120 @@ func Test_editRun(t *testing.T) {
 			},
 			stdout: "https://github.com/OWNER/REPO/pull/123\n",
 		},
+		{
+			name: "add-only user reviewer does not resend existing reviewers",
+			input: &EditOptions{
+				Detector:    &fd.EnabledDetectorMock{},
+				SelectorArg: "123",
+				Finder: shared.NewMockFinder("123", &api.PullRequest{
+					URL: "https://github.com/OWNER/REPO/pull/123",
+					ReviewRequests: api.ReviewRequests{
+						Nodes: []struct{ RequestedReviewer api.RequestedReviewer }{
+							{RequestedReviewer: api.RequestedReviewer{TypeName: "User", Login: "hubot"}},
+						},
+					},
+				}, ghrepo.New("OWNER", "REPO")),
+				Reviewers: shared.EditableReviewers{EditableSlice: shared.EditableSlice{Add: []string{"monalisa"}, Edited: true}},
+				Fetcher:   testFetcher{},
+			},
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				mockRepoMetadata(reg, mockRepoMetadataOptions{})
+				mockPullRequestUpdate(reg)
+				reg.Register(
+					httpmock.GraphQL(`mutation RequestReviewsByLogin\b`),
+					httpmock.GraphQLMutation(`
+					{ "data": { "requestReviewsByLogin": { "clientMutationId": "" } } }`,
+						func(inputs map[string]any) {
+							require.Equal(t, true, inputs["union"], "add-only must not replace the reviewer set")
+							require.Equal(t, []any{"monalisa"}, inputs["userLogins"])
+							require.Equal(t, []any{}, inputs["botLogins"])
+							require.Equal(t, []any{}, inputs["teamSlugs"])
+						}),
+				)
+			},
+			stdout: "https://github.com/OWNER/REPO/pull/123\n",
+		},
+		{
+			name: "add-only team reviewer uses union",
+			input: &EditOptions{
+				Detector:    &fd.EnabledDetectorMock{},
+				SelectorArg: "123",
+				Finder: shared.NewMockFinder("123", &api.PullRequest{
+					URL: "https://github.com/OWNER/REPO/pull/123",
+					ReviewRequests: api.ReviewRequests{
+						Nodes: []struct{ RequestedReviewer api.RequestedReviewer }{
+							{RequestedReviewer: api.RequestedReviewer{TypeName: "User", Login: "hubot"}},
+						},
+					},
+				}, ghrepo.New("OWNER", "REPO")),
+				Reviewers: shared.EditableReviewers{EditableSlice: shared.EditableSlice{Add: []string{"OWNER/core"}, Edited: true}},
+				Fetcher:   testFetcher{},
+			},
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				mockRepoMetadata(reg, mockRepoMetadataOptions{})
+				mockPullRequestUpdate(reg)
+				reg.Register(
+					httpmock.GraphQL(`mutation RequestReviewsByLogin\b`),
+					httpmock.GraphQLMutation(`
+					{ "data": { "requestReviewsByLogin": { "clientMutationId": "" } } }`,
+						func(inputs map[string]any) {
+							require.Equal(t, true, inputs["union"], "add-only must not replace the reviewer set")
+							require.Equal(t, []any{}, inputs["userLogins"])
+							require.Equal(t, []any{}, inputs["botLogins"])
+							require.Equal(t, []any{"OWNER/core"}, inputs["teamSlugs"])
+						}),
+				)
+			},
+			stdout: "https://github.com/OWNER/REPO/pull/123\n",
+		},
+		{
+			name: "add-only copilot reviewer uses union",
+			input: &EditOptions{
+				Detector:    &fd.EnabledDetectorMock{},
+				SelectorArg: "123",
+				Finder: shared.NewMockFinder("123", &api.PullRequest{
+					URL: "https://github.com/OWNER/REPO/pull/123",
+					ReviewRequests: api.ReviewRequests{
+						Nodes: []struct{ RequestedReviewer api.RequestedReviewer }{
+							{RequestedReviewer: api.RequestedReviewer{TypeName: "User", Login: "hubot"}},
+						},
+					},
+				}, ghrepo.New("OWNER", "REPO")),
+				Reviewers: shared.EditableReviewers{EditableSlice: shared.EditableSlice{Add: []string{"@copilot"}, Edited: true}},
+				Fetcher:   testFetcher{},
+			},
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				mockRepoMetadata(reg, mockRepoMetadataOptions{})
+				mockPullRequestUpdate(reg)
+				reg.Register(
+					httpmock.GraphQL(`mutation RequestReviewsByLogin\b`),
+					httpmock.GraphQLMutation(`
+					{ "data": { "requestReviewsByLogin": { "clientMutationId": "" } } }`,
+						func(inputs map[string]any) {
+							require.Equal(t, true, inputs["union"], "add-only must not replace the reviewer set")
+							require.Equal(t, []any{}, inputs["userLogins"])
+							require.Equal(t, []any{"copilot-pull-request-reviewer[bot]"}, inputs["botLogins"])
+							require.Equal(t, []any{}, inputs["teamSlugs"])
+						}),
+				)
+			},
+			stdout: "https://github.com/OWNER/REPO/pull/123\n",
+		},
+		{
+			name: "add-only blank reviewer makes no reviewer request",
+			input: &EditOptions{
+				Detector:    &fd.EnabledDetectorMock{},
+				SelectorArg: "123",
+				Finder:      shared.NewMockFinder("123", &api.PullRequest{URL: "https://github.com/OWNER/REPO/pull/123"}, ghrepo.New("OWNER", "REPO")),
+				Reviewers:   shared.EditableReviewers{EditableSlice: shared.EditableSlice{Add: []string{""}, Edited: true}},
+				Fetcher:     testFetcher{},
+			},
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				mockRepoMetadata(reg, mockRepoMetadataOptions{})
+				mockPullRequestUpdate(reg)
+			},
+			stdout: "https://github.com/OWNER/REPO/pull/123\n",
+		},
 		// Conditional team fetching cases
 		{
 			name: "non-interactive add only user reviewers skips team fetch",

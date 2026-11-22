@@ -300,8 +300,14 @@ func editRun(opts *EditOptions) error {
 
 	findOptions := shared.FindOptions{
 		Selector: opts.SelectorArg,
-		Fields:   []string{"id", "author", "url", "title", "body", "baseRefName", "reviewRequests", "labels", "projectCards", "projectItems", "milestone"},
+		Fields:   []string{"id", "author", "url", "title", "body", "baseRefName", "labels", "projectCards", "projectItems", "milestone"},
 		Detector: opts.Detector,
+	}
+
+	// Add-only reviewer edits send just the additions, so the current review
+	// requests are not needed and must not be read and resent.
+	if !isAddOnlyReviewerEdit(opts.Editable) {
+		findOptions.Fields = append(findOptions.Fields, "reviewRequests")
 	}
 
 	if len(opts.Assets) > 0 {
@@ -341,8 +347,10 @@ func editRun(opts *EditOptions) error {
 	editable.Title.Default = pr.Title
 	editable.Body.Default = pr.Body
 	editable.Base.Default = pr.BaseRefName
-	editable.Reviewers.Default = pr.ReviewRequests.DisplayNames()
-	editable.Reviewers.DefaultLogins = pr.ReviewRequests.Logins()
+	if !isAddOnlyReviewerEdit(opts.Editable) {
+		editable.Reviewers.Default = pr.ReviewRequests.DisplayNames()
+		editable.Reviewers.DefaultLogins = pr.ReviewRequests.Logins()
+	}
 	// TODO ApiActorsSupported
 	if issueFeatures.ApiActorsSupported {
 		editable.ApiActorsSupported = true
@@ -514,6 +522,27 @@ func updatePullRequestReviews(httpClient *http.Client, repo ghrepo.Interface, pr
 
 	client := api.NewClientFromHTTP(httpClient)
 
+	// Add-only edits request just the additions without replacing the server's
+	// reviewer list. Replacing it from a list read earlier would drop review
+	// requests that GitHub created in the meantime (for example automatic team
+	// assignment).
+	if isAddOnlyReviewerEdit(editable) {
+		add := nonBlank(editable.Reviewers.Add)
+		if len(add) == 0 {
+			return nil
+		}
+		if editable.ApiActorsSupported {
+			add = shared.NewCopilotReviewerReplacer().ReplaceSlice(add)
+			users, bots, teams := partitionReviewersByType(add)
+			return api.RequestReviewsByLogin(client, repo, prID, users, bots, teams, true)
+		}
+		users, bots, teams := partitionReviewersByType(add)
+		return api.AddPullRequestReviews(client, repo, number, append(users, bots...), teams)
+	}
+
+	// Everything below replaces the reviewer set: the login-based mutation has
+	// no remove primitive, so removals need the full computed list (union: false).
+
 	// Rebuild the Value slice from non-interactive flag input.
 	if len(editable.Reviewers.Add) != 0 || len(editable.Reviewers.Remove) != 0 {
 		add := editable.Reviewers.Add
@@ -547,6 +576,22 @@ func updatePullRequestReviews(httpClient *http.Client, repo ghrepo.Interface, pr
 		return updatePullRequestReviewsGraphQL(client, repo, prID, editable)
 	}
 	return updatePullRequestReviewsREST(client, repo, number, editable)
+}
+
+// isAddOnlyReviewerEdit reports whether the reviewer edit comes from
+// --add-reviewer alone, without removals or interactive selection.
+func isAddOnlyReviewerEdit(e shared.Editable) bool {
+	return e.Reviewers.Edited && len(e.Reviewers.Add) > 0 && len(e.Reviewers.Remove) == 0
+}
+
+func nonBlank(values []string) []string {
+	var out []string
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			out = append(out, strings.TrimSpace(v))
+		}
+	}
+	return out
 }
 
 // updatePullRequestReviewsGraphQL uses the RequestReviewsByLogin mutation.
