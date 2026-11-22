@@ -190,7 +190,7 @@ func NewCmdIssues(f *cmdutil.Factory, runF func(*shared.IssuesOptions) error) *c
 	cmdutil.StringSliceEnumFlag(cmd, &opts.Query.Qualifiers.In, "match", "", nil, []string{"title", "body", "comments"}, "Restrict search to specific field of issue")
 	cmd.Flags().StringVar(&opts.Query.Qualifiers.Interactions, "interactions", "", "Filter on `number` of reactions and comments")
 	cmd.Flags().StringVar(&opts.Query.Qualifiers.Involves, "involves", "", "Filter based on involvement of `user`")
-	cmdutil.StringSliceEnumFlag(cmd, &opts.Query.Qualifiers.Is, "visibility", "", nil, []string{"public", "private", "internal"}, "Filter based on repository visibility")
+	cmdutil.StringSliceEnumFlag(cmd, &opts.Query.Qualifiers.Is, "visibility", "", nil, []string{"public", "private"}, "Filter based on repository visibility")
 	cmd.Flags().StringSliceVar(&opts.Query.Qualifiers.Label, "label", nil, "Filter on label")
 	cmd.Flags().StringVar(&opts.Query.Qualifiers.Language, "language", "", "Filter based on the coding language")
 	cmd.Flags().BoolVar(&locked, "locked", false, "Filter on locked conversation status")
