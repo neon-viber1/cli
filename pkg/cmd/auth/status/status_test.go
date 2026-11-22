@@ -15,6 +15,7 @@ import (
 	"github.com/cli/cli/v2/internal/config"
 	"github.com/cli/cli/v2/internal/gh"
 	ghmock "github.com/cli/cli/v2/internal/gh/mock"
+	"github.com/cli/cli/v2/internal/keyring"
 	"github.com/cli/cli/v2/pkg/cmdutil"
 	"github.com/cli/cli/v2/pkg/httpmock"
 	"github.com/cli/cli/v2/pkg/iostreams"
@@ -1226,4 +1227,23 @@ func TestMaskToken(t *testing.T) {
 			assert.Equal(t, tt.want, maskToken(tt.token))
 		})
 	}
+}
+
+func Test_statusRun_keyringTimeout(t *testing.T) {
+	cfg, _ := config.NewIsolatedTestConfig(t, "")
+	t.Setenv("GH_TOKEN", "gho_abc123")
+	keyring.MockTimedOut(t)
+	ios, _, stdout, stderr := iostreams.Test()
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+	reg.Register(httpmock.GraphQL(`query UserCurrent\b`), httpmock.StringResponse(`{"data":{"viewer":{"login":"monalisa"}}}`))
+	opts := &StatusOptions{
+		IO:         ios,
+		Config:     func() (gh.Config, error) { return cfg, nil },
+		HttpClient: func() (*http.Client, error) { return &http.Client{Transport: reg}, nil },
+	}
+
+	_ = statusRun(opts)
+	assert.NotContains(t, stdout.String(), "did not respond")
+	assert.Contains(t, stderr.String(), "the system keyring did not respond")
 }

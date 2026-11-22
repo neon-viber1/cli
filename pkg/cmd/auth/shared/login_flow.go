@@ -14,6 +14,7 @@ import (
 	"github.com/cli/cli/v2/internal/browser"
 	"github.com/cli/cli/v2/internal/gh"
 	"github.com/cli/cli/v2/internal/gh/ghtelemetry"
+	"github.com/cli/cli/v2/internal/keyring"
 	"github.com/cli/cli/v2/pkg/cmd/ssh-key/add"
 	"github.com/cli/cli/v2/pkg/cmdutil"
 	"github.com/cli/cli/v2/pkg/iostreams"
@@ -269,6 +270,9 @@ func Login(opts *LoginOptions) error {
 		return err
 	}
 	if insecureStorageUsed {
+		if timeoutErr := keyring.TimedOut(); timeoutErr != nil && opts.SecureStorage {
+			fmt.Fprintf(opts.IO.ErrOut, "%s %s; to skip the keyring, retry with --insecure-storage\n", cs.WarningIcon(), timeoutErr)
+		}
 		fmt.Fprintf(opts.IO.ErrOut, "%s Authentication credentials saved in plain text\n", cs.Yellow("!"))
 	}
 
