@@ -16,6 +16,7 @@ import (
 	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/v2/pkg/auth"
 	"github.com/cli/cli/v2/pkg/iostreams"
+	ghAPI "github.com/cli/go-gh/v2/pkg/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -462,7 +463,7 @@ func TestHTTPClientSanitizeJSONControlCharactersC0(t *testing.T) {
 	assert.Equal(t, "1^A 2^B 3^C 4^D 5^E 6^F 7^G 8\b 9\t A\r\n B\v C\f D\r\n E^N F^O", issue.Body)
 	assert.Equal(t, "10^P 11^Q 12^R 13^S 14^T 15^U 16^V 17^W 18^X 19^Y 1A^Z 1B^[ 1C^\\ 1D^] 1E^^ 1F^_", issue.Author.Name)
 	assert.Equal(t, "monalisa \\u00^[", issue.Author.Login)
-	assert.Equal(t, "Escaped ^[ \\^[ \\^[ \\\\^[", issue.ActiveLockReason)
+	assert.Equal(t, "Escaped ^[ \\u001B \\^[ \\\\u001B", issue.ActiveLockReason)
 }
 
 func TestHTTPClientSanitizeControlCharactersC1(t *testing.T) {
@@ -663,4 +664,52 @@ func normalizeVerboseLog(t string) string {
 	t = durationRE.ReplaceAllString(t, "* Request took <duration>")
 	t = timezoneRE.ReplaceAllString(t, "> Time-Zone: <timezone>")
 	return t
+}
+
+func TestHTTPClientPreservesLiteralEscapeText(t *testing.T) {
+	const literal = `"\u001b[31mexample"`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := json.Marshal(map[string]string{
+			"body":    literal,
+			"control": "\x1b[31mexample",
+			"plain":   "example",
+		})
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write(data)
+	}))
+	defer ts.Close()
+
+	client, err := NewHTTPClient(HTTPClientOptions{})
+	require.NoError(t, err)
+
+	check := func(t *testing.T, body []byte) {
+		t.Helper()
+		var got map[string]string
+		require.NoError(t, json.Unmarshal(body, &got))
+		assert.Equal(t, literal, got["body"])
+		assert.True(t, json.Valid([]byte(got["body"])), "embedded JSON must still parse")
+		assert.Equal(t, "^[[31mexample", got["control"])
+		assert.Equal(t, "example", got["plain"])
+	}
+
+	t.Run("direct", func(t *testing.T) {
+		res, err := client.Get(ts.URL)
+		require.NoError(t, err)
+		body, err := io.ReadAll(res.Body)
+		res.Body.Close()
+		require.NoError(t, err)
+		check(t, body)
+	})
+
+	t.Run("nested go-gh client reusing the transport", func(t *testing.T) {
+		// Client.REST and Client.GraphQL build another go-gh client on top of
+		// this transport, which applies its sanitizer a second time.
+		opts := clientOptions("github.com", client.Transport)
+		opts.Host = "127.0.0.1"
+		restClient, err := ghAPI.NewRESTClient(opts)
+		require.NoError(t, err)
+		var raw json.RawMessage
+		require.NoError(t, restClient.Do("GET", ts.URL, nil, &raw))
+		check(t, raw)
+	})
 }
