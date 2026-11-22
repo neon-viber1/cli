@@ -161,6 +161,22 @@ func (r *ResolvedRemotes) NetworkRepos(remotesForLookup int) ([]*api.Repository,
 	return repos, nil
 }
 
+// CanonicalRepoForRemote returns the repository the API resolved the given
+// remote to, which differs from the remote's own URL when the repository has
+// been renamed or transferred. It returns nil if the remote was not looked up
+// or was not found.
+func (r *ResolvedRemotes) CanonicalRepoForRemote(remote *Remote) ghrepo.Interface {
+	if r.network == nil {
+		return nil
+	}
+	for i, rem := range r.remotes {
+		if rem == remote && i < len(r.network.Repositories) && r.network.Repositories[i] != nil {
+			return r.network.Repositories[i]
+		}
+	}
+	return nil
+}
+
 // RemoteForRepo finds the git remote that points to a repository
 func (r *ResolvedRemotes) RemoteForRepo(repo ghrepo.Interface) (*Remote, error) {
 	for _, remote := range r.remotes {

@@ -184,12 +184,31 @@ func setDefaultRun(opts *SetDefaultOptions) error {
 	}
 
 	var selectedRepo ghrepo.Interface
+	var movedRemote *context.Remote
 
 	if opts.Repo != nil {
 		for _, knownRepo := range knownRepos {
 			if ghrepo.IsSame(opts.Repo, knownRepo) {
 				selectedRepo = opts.Repo
 				break
+			}
+		}
+		if selectedRepo == nil {
+			// The argument may name a repository that has since been renamed
+			// or transferred: git remotes keep the old URL while the API
+			// resolves it to the new name. Match on the remote's own repo and
+			// store the canonical name.
+			for _, remote := range remotes {
+				if !ghrepo.IsSame(opts.Repo, remote) {
+					continue
+				}
+				if canonical := resolvedRemotes.CanonicalRepoForRemote(remote); canonical != nil {
+					selectedRepo = canonical
+					movedRemote = remote
+					fmt.Fprintf(opts.IO.ErrOut, "%s %s has moved or been renamed; setting %s as the default repository\n",
+						opts.IO.ColorScheme().WarningIcon(), ghrepo.FullName(opts.Repo), ghrepo.FullName(canonical))
+					break
+				}
 			}
 		}
 		if selectedRepo == nil {
@@ -231,7 +250,10 @@ func setDefaultRun(opts *SetDefaultOptions) error {
 
 	resolution := "base"
 	selectedRemote, _ := resolvedRemotes.RemoteForRepo(selectedRepo)
-	if selectedRemote == nil {
+	if selectedRemote == nil && movedRemote != nil {
+		selectedRemote = movedRemote
+		resolution = ghrepo.FullName(selectedRepo)
+	} else if selectedRemote == nil {
 		sort.Stable(remotes)
 		selectedRemote = remotes[0]
 		resolution = ghrepo.FullName(selectedRepo)
