@@ -255,6 +255,15 @@ func collectInputs(p iprompter, yamlContent []byte) (map[string]string, error) {
 	return providedInputs, nil
 }
 
+// dispatchNotFoundHint explains a 404 from the dispatch endpoint. The API
+// answers 404 for several unrelated causes (including lack of access, which it
+// hides on purpose), so the CLI can only list the likely ones.
+const dispatchNotFoundHint = `The dispatch request was rejected as not found. Possible causes:
+- the account or token lacks write access to the repository (for example team-based access)
+- the token lacks the "repo" and "workflow" scopes, or is not SAML-authorized for the organization
+- the ref does not exist
+- the workflow does not have a "workflow_dispatch" trigger`
+
 func runRun(opts *RunOptions) error {
 	c, err := opts.HttpClient()
 	if err != nil {
@@ -363,6 +372,9 @@ func runRun(opts *RunOptions) error {
 	// changes) will probably default to return 200 + run details.
 	err = client.REST(repo.RepoHost(), "POST", path.String(), body, &response)
 	if err != nil {
+		if httpErr, ok := errors.AsType[api.HTTPError](err); ok && httpErr.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("could not create workflow dispatch event: %w\n%s", err, dispatchNotFoundHint)
+		}
 		return fmt.Errorf("could not create workflow dispatch event: %w", err)
 	}
 

@@ -653,6 +653,35 @@ jobs:
 			errOut:  "could not create workflow dispatch event: HTTP 422 (https://api.github.com/repos/OWNER/REPO/actions/workflows/12345/dispatches)",
 		},
 		{
+			name: "dispatch not found adds hint",
+			tty:  false,
+			opts: &RunOptions{
+				Selector:  "workflow.yml",
+				JSONInput: `{"greeting":"hello there"}`,
+				Detector:  &fd.EnabledDetectorMock{},
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/workflows/workflow.yml"),
+					httpmock.JSONResponse(shared.Workflow{
+						Path: ".github/workflows/workflow.yml",
+						ID:   12345,
+					}))
+				reg.Register(
+					httpmock.REST("POST", "repos/OWNER/REPO/actions/workflows/12345/dispatches"),
+					httpmock.StatusStringResponse(404, "{}"))
+			},
+			wantBody: map[string]any{
+				"inputs": map[string]any{
+					"greeting": "hello there",
+				},
+				"ref":                "trunk",
+				"return_run_details": true,
+			},
+			wantErr: true,
+			errOut:  "could not create workflow dispatch event: HTTP 404 (https://api.github.com/repos/OWNER/REPO/actions/workflows/12345/dispatches)\n" + dispatchNotFoundHint,
+		},
+		{
 			name: "yaml file extension",
 			tty:  false,
 			opts: &RunOptions{
