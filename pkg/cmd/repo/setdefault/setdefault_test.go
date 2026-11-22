@@ -406,6 +406,71 @@ func TestDefaultRun(t *testing.T) {
 			errMsg:  "OWNER2/REPO2 does not correspond to any git remotes",
 		},
 		{
+			name: "non-interactive mode repo moved, argument is old name",
+			opts: SetDefaultOptions{Repo: repo1},
+			remotes: []*context.Remote{
+				{
+					Remote: &git.Remote{Name: "origin"},
+					Repo:   repo1,
+				},
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL(`query RepositoryNetwork\b`),
+					httpmock.StringResponse(`{"data":{"repo_000":{"name":"NEWREPO","owner":{"login":"NEWOWNER"}}}}`),
+				)
+			},
+			gitStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --add remote.origin.gh-resolved NEWOWNER/NEWREPO`, 0, "")
+			},
+			wantStderr: "! OWNER/REPO has moved or been renamed; setting NEWOWNER/NEWREPO as the default repository\n",
+		},
+		{
+			name: "tty repo moved, argument is new name",
+			tty:  true,
+			opts: SetDefaultOptions{Repo: ghrepo.New("NEWOWNER", "NEWREPO")},
+			remotes: []*context.Remote{
+				{
+					Remote: &git.Remote{Name: "origin"},
+					Repo:   repo1,
+				},
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL(`query RepositoryNetwork\b`),
+					httpmock.StringResponse(`{"data":{"repo_000":{"name":"NEWREPO","owner":{"login":"NEWOWNER"}}}}`),
+				)
+			},
+			gitStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --add remote.origin.gh-resolved NEWOWNER/NEWREPO`, 0, "")
+			},
+			wantStdout: "✓ Set NEWOWNER/NEWREPO as the default repository for the current directory\n",
+		},
+		{
+			name: "multiple remotes, only one moved and matches",
+			opts: SetDefaultOptions{Repo: repo2},
+			remotes: []*context.Remote{
+				{
+					Remote: &git.Remote{Name: "origin"},
+					Repo:   repo1,
+				},
+				{
+					Remote: &git.Remote{Name: "upstream"},
+					Repo:   repo2,
+				},
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL(`query RepositoryNetwork\b`),
+					httpmock.StringResponse(`{"data":{"repo_000":{"name":"NEWREPO","owner":{"login":"NEWOWNER"}},"repo_001":{"name":"REPO","owner":{"login":"OWNER"}}}}`),
+				)
+			},
+			gitStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --add remote.upstream.gh-resolved NEWOWNER/NEWREPO`, 0, "")
+			},
+			wantStderr: "! OWNER2/REPO2 has moved or been renamed; setting NEWOWNER/NEWREPO as the default repository\n",
+		},
+		{
 			name: "interactive mode",
 			tty:  true,
 			opts: SetDefaultOptions{},
