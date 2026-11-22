@@ -179,6 +179,12 @@ func displayResults(io *iostreams.IOStreams, results search.CodeResult) error {
 		return nil
 	}
 	for _, code := range results.Items {
+		if len(code.TextMatches) == 0 {
+			// Results without text matches (e.g. filename-only searches) would
+			// otherwise print nothing when piped.
+			fmt.Fprintf(io.Out, "%s:%s\n", cs.Blue(code.Repository.FullName), cs.GreenBold(code.Path))
+			continue
+		}
 		for _, match := range code.TextMatches {
 			lines := formatMatch(match.Fragment, match.Matches, io)
 			for _, line := range lines {
