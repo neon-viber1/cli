@@ -17,7 +17,9 @@ import (
 )
 
 func testLookPath(s string) ([]string, []string, error) {
-	return []string{os.Args[0], "-test.run=TestHelperProcess", "--", s}, []string{"GH_WANT_HELPER_PROCESS=1"}, nil
+	// Inherit the environment: on Windows a child started without SystemRoot
+	// and TEMP can fail to launch.
+	return []string{os.Args[0], "-test.run=TestHelperProcess", "--", s}, append(os.Environ(), "GH_WANT_HELPER_PROCESS=1"), nil
 }
 
 func TestHelperProcess(t *testing.T) {
