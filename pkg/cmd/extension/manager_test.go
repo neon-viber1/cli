@@ -1613,3 +1613,60 @@ func stubExtensionUpdate(updatePath string) error {
 	}
 	return nil
 }
+
+func TestManager_cleanExtensionUpdateDir_sharedWithInstallDir(t *testing.T) {
+	// Simulates Windows, where the state and data directories are the same folder,
+	// so the update directory is the installed extension folder.
+	dataDir := t.TempDir()
+	extDir := filepath.Join(dataDir, "extensions", "gh-hello")
+	m := newTestManager(dataDir, filepath.Join(dataDir, "extensions"), nil, nil, nil)
+	require.Equal(t, extDir, m.UpdateDir("hello"))
+
+	t.Run("removes only the state file", func(t *testing.T) {
+		require.NoError(t, stubExtension(filepath.Join(extDir, "gh-hello")))
+		require.NoError(t, os.WriteFile(filepath.Join(extDir, "manifest.yml"), []byte("owner: o\n"), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(extDir, "state.yml"), []byte("x: 1\n"), 0644))
+		require.FileExists(t, filepath.Join(extDir, "state.yml"))
+
+		require.NoError(t, m.cleanExtensionUpdateDir("hello"))
+
+		assert.NoFileExists(t, filepath.Join(extDir, "state.yml"))
+		assert.FileExists(t, filepath.Join(extDir, "manifest.yml"))
+		assert.FileExists(t, filepath.Join(extDir, "gh-hello"))
+	})
+
+	t.Run("missing state file is not an error", func(t *testing.T) {
+		require.NoError(t, m.cleanExtensionUpdateDir("hello"))
+		assert.FileExists(t, filepath.Join(extDir, "manifest.yml"))
+	})
+
+	t.Run("failure leaves the installation intact", func(t *testing.T) {
+		require.NoError(t, os.MkdirAll(filepath.Join(extDir, "state.yml", "child"), 0755))
+		err := m.cleanExtensionUpdateDir("hello")
+		require.ErrorContains(t, err, "failed to remove previous extension update state")
+		assert.FileExists(t, filepath.Join(extDir, "manifest.yml"))
+		assert.FileExists(t, filepath.Join(extDir, "gh-hello"))
+	})
+}
+
+func TestManager_cleanExtensionUpdateDir_separateDirs(t *testing.T) {
+	dataDir := t.TempDir()
+	updateDir := t.TempDir()
+	require.NoError(t, stubExtension(filepath.Join(dataDir, "extensions", "gh-hello", "gh-hello")))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "extensions", "gh-hello", "manifest.yml"), []byte("owner: o\n"), 0644))
+	require.NoError(t, stubExtensionUpdate(filepath.Join(updateDir, "gh-hello")))
+
+	m := newTestManager(dataDir, updateDir, nil, nil, nil)
+	require.NoError(t, m.cleanExtensionUpdateDir("hello"))
+
+	assert.NoDirExists(t, filepath.Join(updateDir, "gh-hello"))
+	assert.FileExists(t, filepath.Join(dataDir, "extensions", "gh-hello", "manifest.yml"))
+}
+
+func TestPathsOverlap(t *testing.T) {
+	assert.True(t, pathsOverlap(filepath.Join("a", "b"), filepath.Join("a", "b")))
+	assert.True(t, pathsOverlap(filepath.Join("a", "b"), filepath.Join("a", "b", "c")))
+	assert.True(t, pathsOverlap(filepath.Join("a", "b", "c"), filepath.Join("a", "b")))
+	assert.False(t, pathsOverlap(filepath.Join("a", "b"), filepath.Join("a", "bc")))
+	assert.False(t, pathsOverlap(filepath.Join("a", "b"), filepath.Join("x", "b")))
+}
