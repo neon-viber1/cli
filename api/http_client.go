@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cli/cli/v2/internal/gh/ghtelemetry"
+	"github.com/cli/cli/v2/internal/jsonsanitize"
 	"github.com/cli/cli/v2/pkg/auth"
 	"github.com/cli/cli/v2/utils"
 	ghAPI "github.com/cli/go-gh/v2/pkg/api"
@@ -68,6 +69,8 @@ func NewHTTPClient(opts HTTPClientOptions) (*http.Client, error) {
 		AuthToken:          "none",
 		LogIgnoreEnv:       true,
 		SkipDefaultHeaders: opts.SkipDefaultHeaders,
+		// Protect literal escape text below go-gh's JSON sanitizer.
+		Transport: jsonsanitize.RoundTripper(nil),
 	}
 
 	debugEnabled, debugValue := utils.IsDebugEnabled()
@@ -135,7 +138,7 @@ func NewExternalHTTPClient(opts ExternalHTTPClientOptions) (*http.Client, error)
 		AuthToken:          "none",
 		LogIgnoreEnv:       true,
 		SkipDefaultHeaders: true,
-		Transport:          opts.Transport,
+		Transport:          jsonsanitize.RoundTripper(opts.Transport),
 	}
 
 	debugEnabled, debugValue := utils.IsDebugEnabled()
