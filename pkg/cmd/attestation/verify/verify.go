@@ -69,6 +69,11 @@ func NewVerifyCmd(f *cmdutil.Factory, runF func(*Options) error) *cobra.Command 
 			In this situation, you must use either the %[1]s--signer-workflow%[1]s or
 			the %[1]s--signer-repo%[1]s flag.
 
+			The %[1]s--signer-workflow%[1]s value is matched exactly as a workflow identity and is
+			not a regular expression. The %[1]s@<ref>%[1]s suffix is optional: when it is omitted,
+			any branch, tag or commit SHA is accepted, and when it is given only that ref
+			matches. To match identities by pattern, use %[1]s--cert-identity-regex%[1]s.
+
 			For more options, see the other available flags.
 
 			## Loading Artifacts And Attestations
@@ -155,6 +160,9 @@ func NewVerifyCmd(f *cmdutil.Factory, runF func(*Options) error) *cobra.Command 
 
 			# Verify an artifact signed with a reusable workflow
 			$ gh attestation verify example.bin --owner github --signer-repo actions/example
+
+			# Verify an artifact signed by a specific workflow file (matched exactly, not as a regex)
+			$ gh attestation verify example.bin --owner github --signer-workflow github/example/.github/workflows/attest.yml
 		`),
 		// PreRunE is used to validate flags before the command is run
 		// If an error is returned, its message will be printed to the terminal
@@ -260,7 +268,7 @@ func NewVerifyCmd(f *cmdutil.Factory, runF func(*Options) error) *cobra.Command 
 	verifyCmd.Flags().StringVarP(&opts.SAN, "cert-identity", "", "", "Enforce that the certificate's SubjectAlternativeName matches the provided value exactly")
 	verifyCmd.Flags().StringVarP(&opts.SANRegex, "cert-identity-regex", "i", "", "Enforce that the certificate's SubjectAlternativeName matches the provided regex")
 	verifyCmd.Flags().StringVarP(&opts.SignerRepo, "signer-repo", "", "", "Enforce that the workflow that signed the attestation's repository matches the provided value (<owner>/<repo>)")
-	verifyCmd.Flags().StringVarP(&opts.SignerWorkflow, "signer-workflow", "", "", "Enforce that the workflow that signed the attestation matches the provided value ([host/]<owner>/<repo>/<path>/<to>/<workflow>)")
+	verifyCmd.Flags().StringVarP(&opts.SignerWorkflow, "signer-workflow", "", "", "Enforce that the workflow that signed the attestation matches the provided value exactly ([host/]<owner>/<repo>/<path>/<to>/<workflow>[@<ref>]); the value is not a regular expression")
 	verifyCmd.MarkFlagsMutuallyExclusive("cert-identity", "cert-identity-regex", "signer-repo", "signer-workflow")
 	verifyCmd.Flags().StringVarP(&opts.OIDCIssuer, "cert-oidc-issuer", "", verification.GitHubOIDCIssuer, "Enforce that the issuer of the OIDC token matches the provided value")
 	verifyCmd.Flags().StringVarP(&opts.SignerDigest, "signer-digest", "", "", "Enforce that the digest associated with the signer workflow matches the provided value")

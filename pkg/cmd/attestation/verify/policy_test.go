@@ -517,3 +517,38 @@ func TestSignerWorkflowSANMatchingRepositoryValue(t *testing.T) {
 	san := "https://github.com/owner/builder-attacker/.github/workflows/release.yml@refs/heads/main"
 	require.Error(t, matcher.Verify(certificate.Summary{SubjectAlternativeName: san}))
 }
+
+// TestSignerWorkflowSANMatchingLiteral covers values from the report: a truncated
+// path and regular expression syntax must be matched literally, never as a pattern.
+func TestSignerWorkflowSANMatchingLiteral(t *testing.T) {
+	const dir = "https://github.com/owner/repo/.github/workflows/"
+	testcases := []struct {
+		name        string
+		value       string
+		san         string
+		expectMatch bool
+	}{
+		{"truncated path", "owner/repo/.github/workflows/att", dir + "attest.yml@refs/heads/dev", false},
+		{"alternation is literal", "owner/repo/.github/workflows/attest.yml@refs/heads/(main|dev)", dir + "attest.yml@refs/heads/dev", false},
+		{"alternation matches only itself", "owner/repo/.github/workflows/attest.yml@refs/heads/(main|dev)", dir + "attest.yml@refs/heads/(main|dev)", true},
+		{"wildcard is literal", "owner/repo/.github/workflows/.*", dir + "attest.yml@refs/heads/dev", false},
+		{"pinned ref rejects other ref", "owner/repo/.github/workflows/attest.yml@refs/heads/main", dir + "attest.yml@refs/heads/dev", false},
+		{"pinned ref matches itself", "owner/repo/.github/workflows/attest.yml@refs/heads/main", dir + "attest.yml@refs/heads/main", true},
+		{"no ref matches branch", "owner/repo/.github/workflows/attest.yml", dir + "attest.yml@refs/heads/dev", true},
+		{"no ref matches commit SHA", "owner/repo/.github/workflows/attest.yml", dir + "attest.yml@09b495c3f12c7881b3cc17209a327792065c1a1d", true},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			sanRegex, err := validateSignerWorkflow("github.com", tc.value)
+			require.NoError(t, err)
+			matcher, err := verify.NewSANMatcher("", sanRegex)
+			require.NoError(t, err)
+			err = matcher.Verify(certificate.Summary{SubjectAlternativeName: tc.san})
+			if tc.expectMatch {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
