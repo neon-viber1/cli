@@ -176,15 +176,15 @@ func TestTokenForUserResolution(t *testing.T) {
 			// This state should not occur in practice: logging in with a non-refreshable token deletes any
 			// refreshable record for that account, and logging in with a refreshable token deletes the non-expiring
 			// tokens. The case documents the resolution precedence regardless: the non-expiring config token is probed
-			// last, so the managed refreshable credential still wins over it, matching setActiveCredential.
-			name: "prefers refreshable over non-expiring config token",
+			// first, so it wins over the managed refreshable credential, matching setActiveCredential.
+			name: "prefers non-expiring config token over refreshable",
 			setup: func(t *testing.T, authCfg *AuthConfig) {
 				authCfg.cfg.Set([]string{hostsKey, "github.com", usersKey, "test-user", oauthTokenKey}, "plain-token")
 				setRefreshableConfigField(t, authCfg, "github.com", "test-user", "access_token", "access")
 				setRefreshableConfigField(t, authCfg, "github.com", "test-user", "refresh_token", "refresh")
 			},
-			wantToken:  "access",
-			wantSource: "refreshable_oauth_token",
+			wantToken:  "plain-token",
+			wantSource: "oauth_token",
 		},
 		{
 			// Also a mixed state the write paths keep unreachable; documents that the non-expiring keyring token is
