@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -824,28 +825,132 @@ func TestClientPushRevisionReturnsPushRemoteTrackingRef(t *testing.T) {
 func TestClientPushRevisionReportsUnresolvedBranch(t *testing.T) {
 	// Given a repository without the requested branch
 	repo := newTestRepo(t)
+	repo.commit(t, "initial commit")
 
 	// When its push revision is resolved
 	trackingRef, err := repo.client.PushRevision(t.Context(), "missing")
 
-	// Then Git's revision error is returned
+	// Then an error is returned
 	require.Error(t, err)
-	var gitError *GitError
-	require.ErrorAs(t, err, &gitError)
-	assert.NotZero(t, gitError.ExitCode)
 	assert.Empty(t, trackingRef)
 }
 
-func TestParsePushRevisionReportsMalformedSymbolicRef(t *testing.T) {
-	// Given Git returns a symbolic push ref outside refs/remotes
-	output := []byte("not/a/valid/remote/ref")
+func TestClientPushRevisionReportsBranchWithoutPushTarget(t *testing.T) {
+	// Given a branch with no remote configured
+	repo := newTestRepo(t)
+	repo.commit(t, "initial commit")
 
-	// When the push revision is parsed
-	trackingRef, err := parsePushRevision(output)
+	// When its push revision is resolved
+	trackingRef, err := repo.client.PushRevision(t.Context(), "trunk")
 
-	// Then the malformed ref is reported with context
-	require.EqualError(t, err, "could not parse push revision: remote tracking branch must have format refs/remotes/<remote>/<branch> but was: not/a/valid/remote/ref")
+	// Then an error is returned
+	require.Error(t, err)
 	assert.Empty(t, trackingRef)
+}
+
+func TestClientPushRevisionResolvesScenarios(t *testing.T) {
+	tests := []struct {
+		name   string
+		branch string
+		setup  func(t *testing.T, repo *testRepo)
+		want   RemoteTrackingRef
+	}{
+		{
+			name:   "simple tracked branch",
+			branch: "trunk",
+			setup: func(t *testing.T, repo *testRepo) {
+				repo.run(t, "remote", "add", "origin", filepath.Join(t.TempDir(), "remote.git"))
+				repo.run(t, "config", "branch.trunk.remote", "origin")
+				repo.run(t, "config", "branch.trunk.merge", "refs/heads/trunk")
+			},
+			want: RemoteTrackingRef{Remote: "origin", Branch: "trunk"},
+		},
+		{
+			name:   "remote.pushDefault",
+			branch: "trunk",
+			setup: func(t *testing.T, repo *testRepo) {
+				repo.run(t, "remote", "add", "upstream", filepath.Join(t.TempDir(), "upstream.git"))
+				repo.run(t, "remote", "add", "fork", filepath.Join(t.TempDir(), "fork.git"))
+				repo.run(t, "config", "branch.trunk.remote", "upstream")
+				repo.run(t, "config", "branch.trunk.merge", "refs/heads/trunk")
+				repo.run(t, "config", "remote.pushDefault", "fork")
+				repo.run(t, "config", "push.default", "current")
+			},
+			want: RemoteTrackingRef{Remote: "fork", Branch: "trunk"},
+		},
+		{
+			name:   "branch name with slashes",
+			branch: "feat/x",
+			setup: func(t *testing.T, repo *testRepo) {
+				repo.run(t, "branch", "feat/x")
+				repo.run(t, "remote", "add", "origin", filepath.Join(t.TempDir(), "remote.git"))
+				repo.run(t, "config", "branch.feat/x.remote", "origin")
+				repo.run(t, "config", "branch.feat/x.merge", "refs/heads/feat/x")
+			},
+			want: RemoteTrackingRef{Remote: "origin", Branch: "feat/x"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newTestRepo(t)
+			repo.commit(t, "initial commit")
+			tt.setup(t, repo)
+
+			trackingRef, err := repo.client.PushRevision(t.Context(), tt.branch)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, trackingRef)
+		})
+	}
+}
+
+func TestClientPushRevisionArgumentsContainNoBraces(t *testing.T) {
+	// Given a Git executable that records its arguments
+	repo := newTestRepo(t)
+	argsFile := filepath.Join(t.TempDir(), "args")
+	script := filepath.Join(t.TempDir(), "fakegit")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '"+argsFile+"'\nexit 0\n"), 0o755))
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stub not supported on windows")
+	}
+	repo.client.GitPath = script
+
+	// When the push revision is resolved
+	_, _ = repo.client.PushRevision(t.Context(), "trunk")
+
+	// Then no argument has braces, which Cygwin-built Git would expand
+	recorded, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.NotEmpty(t, recorded)
+	assert.NotContains(t, string(recorded), "{")
+	assert.NotContains(t, string(recorded), "}")
+}
+
+func TestParsePushRevision(t *testing.T) {
+	const ref = "refs/heads/feat"
+	tests := []struct {
+		name    string
+		output  string
+		want    RemoteTrackingRef
+		wantErr string
+	}{
+		{name: "exact match among nested refs", output: "refs/heads/feat refs/remotes/origin/feat\nrefs/heads/feat/x refs/remotes/fork/feat/x\n", want: RemoteTrackingRef{Remote: "origin", Branch: "feat"}},
+		{name: "mangled value", output: "refs/heads/feat feat@push\n", wantErr: "could not parse push revision: remote tracking branch must have format refs/remotes/<remote>/<branch> but was: feat@push"},
+		{name: "empty push", output: "refs/heads/feat \n", wantErr: "could not parse push revision: no push target for refs/heads/feat"},
+		{name: "no output", output: "", wantErr: "could not parse push revision: branch not found: refs/heads/feat"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parsePushRevision([]byte(tt.output), ref)
+			if tt.wantErr != "" {
+				require.EqualError(t, err, tt.wantErr)
+				assert.Empty(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestParseRemoteTrackingRef(t *testing.T) {
