@@ -2,6 +2,7 @@ package delete
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
@@ -231,95 +232,70 @@ func TestDeleteRun(t *testing.T) {
 			name: "keys must be percent-encoded before being used as query params",
 			opts: DeleteOptions{Identifier: "a weird＿cache+key"},
 			stubs: func(reg *httpmock.Registry) {
-				reg.Register(
-					httpmock.QueryMatcher("DELETE", "repos/OWNER/REPO/actions/caches", url.Values{
-						"key": []string{"a weird＿cache+key"},
-					}),
-					httpmock.JSONResponse(shared.CachePayload{
-						TotalCount: 1,
-					}),
-				)
+				stubList(reg, url.Values{"key": []string{"a weird＿cache+key"}}, cache(7, "a weird＿cache+key"))
+				stubDelete(reg, 7)
 			},
 			tty:        true,
 			wantStdout: "✓ Deleted 1 cache from OWNER/REPO\n",
 		},
 		{
-			name: "deletes multiple caches by key",
+			name: "deletes multiple caches with the same key",
 			opts: DeleteOptions{Identifier: "shared-cache-key"},
 			stubs: func(reg *httpmock.Registry) {
-				reg.Register(
-					httpmock.QueryMatcher("DELETE", "repos/OWNER/REPO/actions/caches", url.Values{
-						"key": []string{"shared-cache-key"},
-					}),
-					httpmock.JSONResponse(shared.CachePayload{
-						TotalCount: 5,
-					}),
-				)
+				stubList(reg, url.Values{"key": []string{"shared-cache-key"}},
+					cache(1, "shared-cache-key"), cache(2, "shared-cache-key"), cache(3, "shared-cache-key"))
+				stubDelete(reg, 1)
+				stubDelete(reg, 2)
+				stubDelete(reg, 3)
 			},
 			tty:        true,
-			wantStdout: "✓ Deleted 5 caches from OWNER/REPO\n",
+			wantStdout: "✓ Deleted 3 caches from OWNER/REPO\n",
 		},
 		{
-			name: "no caches to delete when deleting all",
-			opts: DeleteOptions{DeleteAll: true},
+			name: "deletes only the exact key and not keys sharing it as a prefix",
+			opts: DeleteOptions{Identifier: "foo"},
 			stubs: func(reg *httpmock.Registry) {
-				reg.Register(
-					httpmock.REST("GET", "repos/OWNER/REPO/actions/caches"),
-					httpmock.JSONResponse(shared.CachePayload{
-						ActionsCaches: []shared.Cache{},
-						TotalCount:    0,
-					}),
-				)
+				stubList(reg, url.Values{"key": []string{"foo"}},
+					cache(10, "foo-13912682996"), cache(11, "foo"), cache(12, "foobar"))
+				stubDelete(reg, 11)
 			},
-			tty:        false,
+			tty:        true,
+			wantStdout: "✓ Deleted 1 cache from OWNER/REPO\n",
+		},
+		{
+			name: "deletes nothing when the key only matches as a prefix",
+			opts: DeleteOptions{Identifier: "foo"},
+			stubs: func(reg *httpmock.Registry) {
+				stubList(reg, url.Values{"key": []string{"foo"}}, cache(10, "foo-13912682996"))
+			},
 			wantErr:    true,
-			wantErrMsg: "X No caches to delete",
+			wantErrMsg: "X Could not find a cache matching foo in OWNER/REPO",
 		},
 		{
-			name: "no caches to delete when deleting all but succeed on no cache tty",
-			opts: DeleteOptions{DeleteAll: true, SucceedOnNoCaches: true},
+			name: "finds the exact key on a later page",
+			opts: DeleteOptions{Identifier: "foo"},
 			stubs: func(reg *httpmock.Registry) {
 				reg.Register(
-					httpmock.REST("GET", "repos/OWNER/REPO/actions/caches"),
-					httpmock.JSONResponse(shared.CachePayload{
-						ActionsCaches: []shared.Cache{},
-						TotalCount:    0,
-					}),
+					httpmock.QueryMatcher("GET", "repos/OWNER/REPO/actions/caches", url.Values{"key": []string{"foo"}}),
+					httpmock.WithHeader(
+						httpmock.JSONResponse(shared.CachePayload{ActionsCaches: []shared.Cache{cache(10, "foo-1")}}),
+						"Link", `<https://api.github.com/repositories/1/actions/caches?page=2>; rel="next"`),
 				)
+				reg.Register(
+					httpmock.QueryMatcher("GET", "repositories/1/actions/caches", url.Values{"page": []string{"2"}}),
+					httpmock.JSONResponse(shared.CachePayload{ActionsCaches: []shared.Cache{cache(11, "foo")}}),
+				)
+				stubDelete(reg, 11)
 			},
 			tty:        true,
-			wantErr:    false,
-			wantStdout: "✓ No caches to delete\n",
-		},
-		{
-			name: "no caches to delete when deleting all but succeed on no cache non-tty",
-			opts: DeleteOptions{DeleteAll: true, SucceedOnNoCaches: true},
-			stubs: func(reg *httpmock.Registry) {
-				reg.Register(
-					httpmock.REST("GET", "repos/OWNER/REPO/actions/caches"),
-					httpmock.JSONResponse(shared.CachePayload{
-						ActionsCaches: []shared.Cache{},
-						TotalCount:    0,
-					}),
-				)
-			},
-			tty:        false,
-			wantErr:    false,
-			wantStdout: "",
+			wantStdout: "✓ Deleted 1 cache from OWNER/REPO\n",
 		},
 		{
 			name: "deletes cache with ref tty",
 			opts: DeleteOptions{Identifier: "cache-key", Ref: "refs/heads/main"},
 			stubs: func(reg *httpmock.Registry) {
-				reg.Register(
-					httpmock.QueryMatcher("DELETE", "repos/OWNER/REPO/actions/caches", url.Values{
-						"key": []string{"cache-key"},
-						"ref": []string{"refs/heads/main"},
-					}),
-					httpmock.JSONResponse(shared.CachePayload{
-						TotalCount: 1,
-					}),
-				)
+				stubList(reg, url.Values{"key": []string{"cache-key"}, "ref": []string{"refs/heads/main"}}, cache(5, "cache-key"))
+				stubDelete(reg, 5)
 			},
 			tty:        true,
 			wantStdout: "✓ Deleted 1 cache from OWNER/REPO\n",
@@ -328,15 +304,8 @@ func TestDeleteRun(t *testing.T) {
 			name: "deletes cache with ref non-tty",
 			opts: DeleteOptions{Identifier: "cache-key", Ref: "refs/heads/main"},
 			stubs: func(reg *httpmock.Registry) {
-				reg.Register(
-					httpmock.QueryMatcher("DELETE", "repos/OWNER/REPO/actions/caches", url.Values{
-						"key": []string{"cache-key"},
-						"ref": []string{"refs/heads/main"},
-					}),
-					httpmock.JSONResponse(shared.CachePayload{
-						TotalCount: 1,
-					}),
-				)
+				stubList(reg, url.Values{"key": []string{"cache-key"}, "ref": []string{"refs/heads/main"}}, cache(5, "cache-key"))
+				stubDelete(reg, 5)
 			},
 			tty:        false,
 			wantStdout: "",
@@ -345,18 +314,13 @@ func TestDeleteRun(t *testing.T) {
 			name: "deletes multiple caches by key and ref",
 			opts: DeleteOptions{Identifier: "cache-key", Ref: "refs/heads/feature"},
 			stubs: func(reg *httpmock.Registry) {
-				reg.Register(
-					httpmock.QueryMatcher("DELETE", "repos/OWNER/REPO/actions/caches", url.Values{
-						"key": []string{"cache-key"},
-						"ref": []string{"refs/heads/feature"},
-					}),
-					httpmock.JSONResponse(shared.CachePayload{
-						TotalCount: 3,
-					}),
-				)
+				stubList(reg, url.Values{"key": []string{"cache-key"}, "ref": []string{"refs/heads/feature"}},
+					cache(1, "cache-key"), cache(2, "cache-key"))
+				stubDelete(reg, 1)
+				stubDelete(reg, 2)
 			},
 			tty:        true,
-			wantStdout: "✓ Deleted 3 caches from OWNER/REPO\n",
+			wantStdout: "✓ Deleted 2 caches from OWNER/REPO\n",
 		},
 		{
 			// As of now, the API returns HTTP 404 for invalid or non-existent refs.
@@ -364,7 +328,7 @@ func TestDeleteRun(t *testing.T) {
 			opts: DeleteOptions{Identifier: "existing-cache-key", Ref: "invalid-ref"},
 			stubs: func(reg *httpmock.Registry) {
 				reg.Register(
-					httpmock.QueryMatcher("DELETE", "repos/OWNER/REPO/actions/caches", url.Values{
+					httpmock.QueryMatcher("GET", "repos/OWNER/REPO/actions/caches", url.Values{
 						"key": []string{"existing-cache-key"},
 						"ref": []string{"invalid-ref"},
 					}),
@@ -485,4 +449,22 @@ func TestDeleteRun(t *testing.T) {
 			assert.Equal(t, tt.wantStderr, stderr.String())
 		})
 	}
+}
+
+func cache(id int64, key string) shared.Cache {
+	return shared.Cache{Id: id, Key: key}
+}
+
+func stubList(reg *httpmock.Registry, query url.Values, caches ...shared.Cache) {
+	reg.Register(
+		httpmock.QueryMatcher("GET", "repos/OWNER/REPO/actions/caches", query),
+		httpmock.JSONResponse(shared.CachePayload{ActionsCaches: caches, TotalCount: len(caches)}),
+	)
+}
+
+func stubDelete(reg *httpmock.Registry, id int64) {
+	reg.Register(
+		httpmock.REST("DELETE", fmt.Sprintf("repos/OWNER/REPO/actions/caches/%d", id)),
+		httpmock.StatusStringResponse(204, ""),
+	)
 }
