@@ -1370,3 +1370,41 @@ func TestGitIgnoreTemplateReturnsErrorWhenGitIgnoreTemplateNotFound(t *testing.T
 
 	assert.Error(t, err, fmt.Sprintf("Expected error while fetching /gitignore/templates/%v", gitIgnoreTemplateName))
 }
+
+func TestAssigneesToIDs(t *testing.T) {
+	t.Run("logins in the assignable list make no extra request", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		m := RepoMetadataResult{AssignableUsers: []AssignableUser{NewAssignableUser("MONAID", "monalisa", "")}}
+
+		ids, err := m.AssigneesToIDs(newTestClient(reg), "github.com", []string{"MonaLisa"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"MONAID"}, ids)
+	})
+
+	t.Run("a user outside the assignable list is looked up directly", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		reg.Register(
+			httpmock.GraphQL(`query UserID\b`),
+			httpmock.GraphQLQuery(`{"data":{"user":{"id":"OUTSIDEID"}}}`, func(q string, vars map[string]any) {
+				require.Equal(t, "outsider", vars["login"])
+			}))
+		m := RepoMetadataResult{AssignableUsers: []AssignableUser{NewAssignableUser("MONAID", "monalisa", "")}}
+
+		ids, err := m.AssigneesToIDs(newTestClient(reg), "github.com", []string{"monalisa", "outsider"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"MONAID", "OUTSIDEID"}, ids)
+	})
+
+	t.Run("a user that does not exist keeps the not found error", func(t *testing.T) {
+		reg := &httpmock.Registry{}
+		defer reg.Verify(t)
+		reg.Register(
+			httpmock.GraphQL(`query UserID\b`),
+			httpmock.StringResponse(`{"data":{"user":null},"errors":[{"type":"NOT_FOUND","path":["user"],"message":"Could not resolve to a User with the login of 'ghost'."}]}`))
+
+		_, err := (&RepoMetadataResult{}).AssigneesToIDs(newTestClient(reg), "github.com", []string{"ghost"})
+		require.EqualError(t, err, "'ghost' not found")
+	})
+}

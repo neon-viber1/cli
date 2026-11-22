@@ -941,6 +941,86 @@ func Test_editRun(t *testing.T) {
 			stdout: "https://github.com/OWNER/REPO/issue/123\n",
 		},
 		{
+			name: "add-assignee for a user outside the assignable list when actors unavailable",
+			input: &EditOptions{
+				Detector:     &fd.DisabledDetectorMock{},
+				IssueNumbers: []int{123},
+				Assignees: prShared.EditableAssignees{
+					EditableSlice: prShared.EditableSlice{
+						Add:    []string{"outsider"},
+						Edited: true,
+					},
+				},
+				FetchOptions: prShared.FetchOptions,
+			},
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL(`query IssueByNumber\b`),
+					httpmock.StringResponse(`
+					{ "data": { "repository": { "hasIssuesEnabled": true, "issue": {
+						"id": "123", "number": 123,
+						"url": "https://github.com/OWNER/REPO/issue/123",
+						"assignees": { "nodes": [], "totalCount": 0 }
+					} } } }`))
+				reg.Register(
+					httpmock.GraphQL(`query RepositoryAssignableUsers\b`),
+					httpmock.StringResponse(`
+					{ "data": { "repository": { "assignableUsers": {
+						"nodes": [ { "login": "hubot", "id": "HUBOTID", "name": "" } ],
+						"pageInfo": { "hasNextPage": false }
+					} } } }`))
+				reg.Register(
+					httpmock.GraphQL(`query UserID\b`),
+					httpmock.GraphQLQuery(`{ "data": { "user": { "id": "OUTSIDEID" } } }`,
+						func(_ string, vars map[string]any) {
+							require.Equal(t, "outsider", vars["login"])
+						}))
+				reg.Register(
+					httpmock.GraphQL(`mutation IssueUpdate\b`),
+					httpmock.GraphQLMutation(`{ "data": { "updateIssue": { "__typename": "" } } }`,
+						func(inputs map[string]any) {
+							require.Equal(t, []any{"OUTSIDEID"}, inputs["assigneeIds"])
+						}))
+			},
+			stdout: "https://github.com/OWNER/REPO/issue/123\n",
+		},
+		{
+			name: "add-assignee for a user that does not exist keeps the not found error",
+			input: &EditOptions{
+				Detector:     &fd.DisabledDetectorMock{},
+				IssueNumbers: []int{123},
+				Assignees: prShared.EditableAssignees{
+					EditableSlice: prShared.EditableSlice{
+						Add:    []string{"ghost"},
+						Edited: true,
+					},
+				},
+				FetchOptions: prShared.FetchOptions,
+			},
+			httpStubs: func(t *testing.T, reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL(`query IssueByNumber\b`),
+					httpmock.StringResponse(`
+					{ "data": { "repository": { "hasIssuesEnabled": true, "issue": {
+						"id": "123", "number": 123,
+						"url": "https://github.com/OWNER/REPO/issue/123",
+						"assignees": { "nodes": [], "totalCount": 0 }
+					} } } }`))
+				reg.Register(
+					httpmock.GraphQL(`query RepositoryAssignableUsers\b`),
+					httpmock.StringResponse(`
+					{ "data": { "repository": { "assignableUsers": {
+						"nodes": [], "pageInfo": { "hasNextPage": false }
+					} } } }`))
+				reg.Register(
+					httpmock.GraphQL(`query UserID\b`),
+					httpmock.StringResponse(`{ "data": { "user": null }, "errors": [ { "type": "NOT_FOUND", "path": ["user"], "message": "Could not resolve to a User" } ] }`))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to update 1 issue",
+			stderr:     "failed to update https://github.com/OWNER/REPO/issue/123: 'ghost' not found",
+		},
+		{
 			name: "edit type",
 			input: &EditOptions{
 				Detector:     &fd.EnabledDetectorMock{},

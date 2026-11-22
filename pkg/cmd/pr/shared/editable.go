@@ -145,7 +145,7 @@ func (e Editable) AssigneeIds(client *api.Client, repo ghrepo.Interface) (*[]str
 
 		e.Assignees.Value = assigneeSet.ToSlice()
 	}
-	a, err := e.Metadata.MembersToIDs(e.Assignees.Value)
+	a, err := e.Metadata.AssigneesToIDs(client, repo.RepoHost(), e.Assignees.Value)
 	return &a, err
 }
 
