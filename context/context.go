@@ -81,8 +81,9 @@ func (r *ResolvedRemotes) BaseRepo(io *iostreams.IOStreams) (ghrepo.Interface, e
 	}
 
 	if !io.CanPrompt() {
-		// we cannot prompt, so just resort to the 1st remote
-		return r.remotes[0], nil
+		// We cannot prompt, so use the 1st remote. Look up its canonical name
+		// so a renamed repository resolves the same way as in an interactive run.
+		return r.canonicalFirstRemote(), nil
 	}
 
 	repos, err := r.NetworkRepos(defaultRemotesForLookup)
@@ -125,6 +126,26 @@ func (r *ResolvedRemotes) HeadRepos() ([]*api.Repository, error) {
 		}
 	}
 	return results, nil
+}
+
+// canonicalFirstRemote returns the repository the first remote currently points
+// to on the server, which differs from the remote's own name after a rename.
+// Any lookup failure or missing repository falls back to the remote as written,
+// so the caller's own request surfaces the error as it did before.
+func (r *ResolvedRemotes) canonicalFirstRemote() ghrepo.Interface {
+	first := r.remotes[0]
+	if r.apiClient == nil {
+		return first
+	}
+	result, err := api.RepoNetwork(r.apiClient, []ghrepo.Interface{first})
+	if err != nil || len(result.Repositories) == 0 || result.Repositories[0] == nil {
+		return first
+	}
+	repo := result.Repositories[0]
+	if repo.RepoOwner() == "" || repo.RepoName() == "" || ghrepo.IsSame(repo, first) {
+		return first
+	}
+	return repo
 }
 
 // NetworkRepos fetches info about remotes for the network of repos.

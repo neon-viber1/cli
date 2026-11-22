@@ -203,6 +203,49 @@ func Test_SmartBaseRepo(t *testing.T) {
 					`))
 			},
 		},
+		{
+			name: "renamed remote resolves to canonical name when not a TTY",
+			remotes: git.RemoteSet{
+				git.NewRemote("origin", "https://github.com/owner/oldname.git"),
+			},
+			wantsName:  "newname",
+			wantsOwner: "owner",
+			wantsHost:  "github.com",
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL("RepositoryNetwork"),
+					httpmock.StringResponse(`{"data":{"viewer":{"login":"someone"},"repo_000":{"id":"X","name":"newname","owner":{"login":"owner"},"viewerPermission":"READ","defaultBranchRef":{"name":"main"},"isPrivate":false,"parent":null}}}`))
+			},
+		},
+		{
+			name: "renamed remote resolves to canonical name when a TTY",
+			remotes: git.RemoteSet{
+				git.NewRemote("origin", "https://github.com/owner/oldname.git"),
+			},
+			wantsName:  "newname",
+			wantsOwner: "owner",
+			wantsHost:  "github.com",
+			tty:        true,
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL("RepositoryNetwork"),
+					httpmock.StringResponse(`{"data":{"viewer":{"login":"someone"},"repo_000":{"id":"X","name":"newname","owner":{"login":"owner"},"viewerPermission":"READ","defaultBranchRef":{"name":"main"},"isPrivate":false,"parent":null}}}`))
+			},
+		},
+		{
+			name: "unresolvable remote falls back to remote name when not a TTY",
+			remotes: git.RemoteSet{
+				git.NewRemote("origin", "https://github.com/owner/gone.git"),
+			},
+			wantsName:  "gone",
+			wantsOwner: "owner",
+			wantsHost:  "github.com",
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL("RepositoryNetwork"),
+					httpmock.StringResponse(`{"data":{"viewer":{"login":"someone"},"repo_000":null},"errors":[{"type":"NOT_FOUND","path":["repo_000"],"message":"Could not resolve"}]}`))
+			},
+		},
 	}
 
 	for _, tt := range tests {
