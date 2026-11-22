@@ -1370,3 +1370,78 @@ func TestGitIgnoreTemplateReturnsErrorWhenGitIgnoreTemplateNotFound(t *testing.T
 
 	assert.Error(t, err, fmt.Sprintf("Expected error while fetching /gitignore/templates/%v", gitIgnoreTemplateName))
 }
+
+func Test_ProjectsTitlesToIDs_sameTitle(t *testing.T) {
+	m := &RepoMetadataResult{ProjectsV2: []ProjectV2{
+		{ID: "USERID", Title: "my-project", Number: 1, ResourcePath: "/users/williammartin/projects/1"},
+		{ID: "ORGID", Title: "My-Project", Number: 3, ResourcePath: "/orgs/williammartin-test-org/projects/3"},
+		{ID: "REPOID", Title: "Other", ResourcePath: "/OWNER/REPO/projects/7"},
+		{ID: "UNIQUEID", Title: "Unique", Number: 4, ResourcePath: "/orgs/williammartin-test-org/projects/4"},
+	}}
+
+	tests := []struct {
+		name    string
+		value   string
+		wantID  string
+		wantErr string
+	}{
+		{name: "user owner/number", value: "williammartin/1", wantID: "USERID"},
+		{name: "org owner/number", value: "williammartin-test-org/3", wantID: "ORGID"},
+		{name: "owner is case-insensitive", value: "WilliamMartin-Test-Org/3", wantID: "ORGID"},
+		{name: "repo-linked resource path", value: "OWNER/7", wantID: "REPOID"},
+		{name: "wrong number", value: "williammartin/2", wantErr: "'williammartin/2' not found"},
+		{name: "ambiguous title", value: "my-project", wantErr: "'my-project' matches multiple projects: williammartin/1, williammartin-test-org/3; use <owner>/<number> to choose one"},
+		{name: "unique title", value: "unique", wantID: "UNIQUEID"},
+		{name: "unknown title", value: "nope", wantErr: "'nope' not found"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// repeat to catch any order-dependent behavior
+			for range 20 {
+				_, ids, err := m.ProjectsTitlesToIDs([]string{tt.value})
+				if tt.wantErr != "" {
+					require.EqualError(t, err, tt.wantErr)
+					continue
+				}
+				require.NoError(t, err)
+				require.Equal(t, []string{tt.wantID}, ids)
+			}
+		})
+	}
+}
+
+func Test_ProjectTitlesToPaths_sameTitle(t *testing.T) {
+	register := func(http *httpmock.Registry) {
+		http.Register(
+			httpmock.GraphQL(`query RepositoryProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "repository": { "projectsV2": {
+				"nodes": [ { "title": "my-project", "id": "REPOID", "number": 5, "resourcePath": "/OWNER/REPO/projects/5" } ],
+				"pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query OrganizationProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "organization": { "projectsV2": {
+				"nodes": [ { "title": "my-project", "id": "ORGID", "number": 3, "resourcePath": "/orgs/ORG/projects/3" } ],
+				"pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query UserProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "viewer": { "projectsV2": {
+				"nodes": [ { "title": "my-project", "id": "USERID", "number": 1, "resourcePath": "/users/MONALISA/projects/1" } ],
+				"pageInfo": { "hasNextPage": false } } } } }`))
+	}
+	repo, _ := ghrepo.FromFullName("OWNER/REPO")
+
+	t.Run("owner/number selects the project", func(t *testing.T) {
+		http := &httpmock.Registry{}
+		register(http)
+		paths, err := ProjectTitlesToPaths(newTestClient(http), repo, []string{"monalisa/1", "org/3"}, gh.ProjectsV1Unsupported)
+		require.NoError(t, err)
+		require.Equal(t, []string{"MONALISA/1", "ORG/3"}, paths)
+	})
+
+	t.Run("ambiguous title is an error", func(t *testing.T) {
+		http := &httpmock.Registry{}
+		register(http)
+		_, err := ProjectTitlesToPaths(newTestClient(http), repo, []string{"my-project"}, gh.ProjectsV1Unsupported)
+		require.EqualError(t, err, "'my-project' matches multiple projects: MONALISA/1, OWNER/5, ORG/3; use <owner>/<number> to choose one")
+	})
+}

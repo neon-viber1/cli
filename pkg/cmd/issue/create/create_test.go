@@ -2071,6 +2071,60 @@ func TestIssueCreate_projectsV2(t *testing.T) {
 	assert.Equal(t, "https://github.com/OWNER/REPO/issues/12\n", output.String())
 }
 
+func TestIssueCreate_projectsV2SameTitle(t *testing.T) {
+	stub := func(http *httpmock.Registry) {
+		http.StubIssueRepoInfoResponse("OWNER", "REPO")
+		http.Register(
+			httpmock.GraphQL(`query RepositoryProjectList\b`),
+			httpmock.StringResponse(`{ "data": { "repository": { "projects": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query OrganizationProjectList\b`),
+			httpmock.StringResponse(`{ "data": { "organization": { "projects": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query RepositoryProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "repository": { "projectsV2": { "nodes": [], "pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query OrganizationProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "organization": { "projectsV2": {
+				"nodes": [ { "title": "my-project", "id": "ORGPROJECTID", "number": 3, "resourcePath": "/orgs/OWNER/projects/3" } ],
+				"pageInfo": { "hasNextPage": false } } } } }`))
+		http.Register(
+			httpmock.GraphQL(`query UserProjectV2List\b`),
+			httpmock.StringResponse(`{ "data": { "viewer": { "projectsV2": {
+				"nodes": [ { "title": "my-project", "id": "USERPROJECTID", "number": 1, "resourcePath": "/users/monalisa/projects/1" } ],
+				"pageInfo": { "hasNextPage": false } } } } }`))
+	}
+
+	t.Run("owner/number selects the project", func(t *testing.T) {
+		http := &httpmock.Registry{}
+		defer http.Verify(t)
+		stub(http)
+		http.Register(
+			httpmock.GraphQL(`mutation IssueCreate\b`),
+			httpmock.GraphQLMutation(`{ "data": { "createIssue": { "issue": { "id": "Issue#1", "URL": "https://github.com/OWNER/REPO/issues/12" } } } }`,
+				func(inputs map[string]any) {}))
+		http.Register(
+			httpmock.GraphQL(`mutation UpdateProjectV2Items\b`),
+			httpmock.GraphQLQuery(`{ "data": { "add_000": { "item": { "id": "1" } } } }`,
+				func(mutations string, inputs map[string]any) {
+					variables, err := json.Marshal(inputs)
+					assert.NoError(t, err)
+					assert.Equal(t, `{"input_000":{"contentId":"Issue#1","projectId":"ORGPROJECTID"}}`, string(variables))
+				}))
+
+		_, err := runCommand(http, true, `-t TITLE -b BODY -p OWNER/3`, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("ambiguous title is an error", func(t *testing.T) {
+		http := &httpmock.Registry{}
+		stub(http)
+
+		_, err := runCommand(http, true, `-t TITLE -b BODY -p my-project`, nil)
+		assert.EqualError(t, err, "could not add to project: 'my-project' matches multiple projects: monalisa/1, OWNER/3; use <owner>/<number> to choose one")
+	})
+}
+
 // TODO projectsV1Deprecation
 // Remove this test.
 func TestProjectsV1Deprecation(t *testing.T) {
