@@ -394,6 +394,35 @@ func TestFind(t *testing.T) {
 			wantRepo: "https://example.org/OWNER/REPO",
 		},
 		{
+			name: "number argument with a repo override and not in a local git repo",
+			args: args{
+				selector:   "13",
+				fields:     []string{"id", "number"},
+				baseRepoFn: stubBaseRepoFn(ghrepo.New("ORIGINOWNER", "REPO"), nil),
+				branchFn: func() (string, error) {
+					return "", &git.GitError{
+						Stderr:   "fatal: branchFn must not be called",
+						ExitCode: 128,
+					}
+				},
+				gitConfigClient: stubGitConfigClient{
+					readBranchConfigFn: stubBranchConfig(git.BranchConfig{}, &git.GitError{
+						Stderr:   "fatal: branchConfig must not be read",
+						ExitCode: 128,
+					}),
+				},
+			},
+			httpStub: func(r *httpmock.Registry) {
+				r.Register(
+					httpmock.GraphQL(`query PullRequestByNumber\b`),
+					httpmock.StringResponse(`{"data":{"repository":{
+						"pullRequest":{"number":13}
+					}}}`))
+			},
+			wantPR:   13,
+			wantRepo: "https://github.com/ORIGINOWNER/REPO",
+		},
+		{
 			name: "PR URL argument and not in a local git repo",
 			args: args{
 				selector:   "https://example.org/OWNER/REPO/pull/13/files",
