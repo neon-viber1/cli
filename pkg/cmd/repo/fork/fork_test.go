@@ -2,6 +2,7 @@ package fork
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -209,6 +210,14 @@ func TestRepoFork(t *testing.T) {
 		reg.Register(
 			httpmock.REST("POST", "repos/OWNER/REPO/forks"),
 			httpmock.StringResponse(forkResult))
+	}
+
+	// existingForkLookup responds to the existing fork lookup with a fork that was created
+	// just now (the creation time must not influence the "already exists" decision).
+	existingForkLookup := func(name string) func(*http.Request) (*http.Response, error) {
+		return httpmock.StringResponse(fmt.Sprintf(`{"data":{"repository":{"forks":{"nodes":[{
+			"id": "123", "name": %q, "owner": {"login": "someone"},
+			"createdAt": "2011-01-26T19:01:12Z", "viewerPermission": "ADMIN"}]}}}}`, name))
 	}
 
 	tests := []struct {
@@ -722,6 +731,97 @@ func TestRepoFork(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  `failed to clone fork: failed to run git: git -c credential.helper= -c credential.helper=!"[^"]+" auth git-credential clone https://github.com/someone/REPO\.git exited with status 65`,
+		},
+		{
+			name: "existing user fork created recently reports already exists, tty",
+			tty:  true,
+			opts: &ForkOptions{Repository: "OWNER/REPO"},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`), existingForkLookup("REPO"))
+			},
+			wantErrOut: "! someone/REPO already exists\n",
+		},
+		{
+			name: "existing user fork created recently reports already exists, non-tty",
+			opts: &ForkOptions{Repository: "OWNER/REPO"},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`), existingForkLookup("REPO"))
+			},
+			wantErrOut: "someone/REPO already exists\n",
+		},
+		{
+			name: "existing renamed user fork is detected",
+			opts: &ForkOptions{Repository: "OWNER/REPO"},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`), existingForkLookup("renamed"))
+			},
+			wantErrOut: "someone/renamed already exists\n",
+		},
+		{
+			name: "no existing user fork creates one",
+			tty:  true,
+			opts: &ForkOptions{Repository: "OWNER/REPO"},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`),
+					httpmock.StringResponse(`{"data":{"repository":{"forks":{"nodes":[]}}}}`))
+				forkPost(reg)
+			},
+			wantErrOut: "✓ Created fork someone/REPO\n",
+		},
+		{
+			name: "fork lookup failure falls back to forking",
+			tty:  true,
+			opts: &ForkOptions{Repository: "OWNER/REPO"},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`),
+					httpmock.StatusStringResponse(500, `{}`))
+				forkPost(reg)
+			},
+			wantErrOut: "✓ Created fork someone/REPO\n",
+		},
+		{
+			name: "fork to org does not look up an existing user fork",
+			tty:  true,
+			opts: &ForkOptions{Repository: "OWNER/REPO", Organization: "gamehendge"},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Exclude(t, httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`))
+				reg.Register(
+					httpmock.REST("POST", "repos/OWNER/REPO/forks"),
+					httpmock.StringResponse(`{"name":"REPO", "owner":{"login":"gamehendge"}}`))
+			},
+			wantErrOut: "✓ Created fork gamehendge/REPO\n",
+		},
+		{
+			name: "existing user fork is still cloned",
+			tty:  true,
+			opts: &ForkOptions{Repository: "OWNER/REPO", Clone: true},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`), existingForkLookup("REPO"))
+			},
+			execStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git clone https://github.com/someone/REPO\.git`, 0, "")
+				cs.Register(`git -C REPO remote add upstream https://github\.com/OWNER/REPO\.git`, 0, "")
+				cs.Register(`git -C REPO fetch upstream`, 0, "")
+				cs.Register(`git -C REPO config --add remote.upstream.gh-resolved base`, 0, "")
+			},
+			wantErrOut: "! someone/REPO already exists\n✓ Cloned fork\n! Repository OWNER/REPO set as the default repository. To learn more about the default repository, run: gh repo set-default --help\n",
+		},
+		{
+			name: "existing user fork is still added as remote",
+			tty:  true,
+			opts: &ForkOptions{Remote: true, RemoteName: "fork"},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(httpmock.GraphQL(`query RepositoryFindExistingUserFork\b`), existingForkLookup("REPO"))
+			},
+			cfgStubs: func(_ *testing.T, c gh.Config) {
+				c.Set("", "git_protocol", "https")
+			},
+			execStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git remote add fork https://github\.com/someone/REPO\.git`, 0, "")
+			},
+			wantErrOut: "! someone/REPO already exists\n✓ Added remote fork\n",
 		},
 	}
 
