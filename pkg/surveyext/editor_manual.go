@@ -2,6 +2,7 @@ package surveyext
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -50,7 +51,12 @@ func edit(editorCommand, fn, initialValue string, stdin io.Reader, stdout io.Wri
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(f.Name())
+	keepFile := false
+	defer func() {
+		if !keepFile {
+			os.Remove(f.Name())
+		}
+	}()
 
 	// write utf8 BOM header if necessary for the current platform and/or locale
 	if needsBom() {
@@ -96,6 +102,13 @@ func edit(editorCommand, fn, initialValue string, stdin io.Reader, stdout io.Wri
 
 	// open the editor
 	if err := cmd.Run(); err != nil {
+		// A non-zero exit does not mean the user's work is worthless: some
+		// editors report a failure after the file was written. Keep the file
+		// when it holds text beyond the initial value so it is not lost.
+		if raw, readErr := os.ReadFile(f.Name()); readErr == nil && !bytes.Equal(bytes.TrimPrefix(raw, bom), []byte(initialValue)) {
+			keepFile = true
+			return "", fmt.Errorf("%w (your edits were kept in %s)", err, f.Name())
+		}
 		return "", err
 	}
 

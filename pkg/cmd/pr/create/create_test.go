@@ -1253,6 +1253,46 @@ func Test_createRun(t *testing.T) {
 			expectedErrOut: "\nCreating pull request for feature into master in OWNER/REPO\n\n",
 		},
 		{
+			name: "confirmation prompt failure after editing preserves input",
+			tty:  true,
+			httpStubs: func(reg *httpmock.Registry, t *testing.T) {
+				reg.Register(
+					httpmock.GraphQL(`query PullRequestTemplates\b`),
+					httpmock.StringResponse(`{ "data": { "repository": { "pullRequestTemplates": [] } } }`))
+			},
+			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git rev-parse --show-toplevel`, 0, "")
+				cs.Register(`git( .+)? log( .+)? origin/master\.\.\.feature`, 0, "")
+			},
+			promptStubs: func(pm *prompter.PrompterMock) {
+				pm.InputFunc = func(p, d string) (string, error) {
+					return "my title", nil
+				}
+				pm.MarkdownEditorFunc = func(p, d string, ba bool) (string, error) {
+					return "my body", nil
+				}
+				pm.SelectFunc = func(p, _ string, opts []string) (int, error) {
+					return -1, errors.New("exit status 1")
+				}
+			},
+			setup: func(opts *CreateOptions, t *testing.T) func() {
+				tmpfile, err := os.CreateTemp(t.TempDir(), "preserved*.json")
+				require.NoError(t, err)
+				opts.IO.TempFileOverride = tmpfile
+				opts.HeadBranch = "feature"
+				return func() {
+					data, err := os.ReadFile(tmpfile.Name())
+					require.NoError(t, err)
+					var saved shared.IssueMetadataState
+					require.NoError(t, json.Unmarshal(data, &saved))
+					assert.Equal(t, "my title", saved.Title)
+					assert.Equal(t, "my body", saved.Body)
+					tmpfile.Close()
+				}
+			},
+			wantErr: "unable to confirm: could not prompt: exit status 1",
+		},
+		{
 			name: "recover",
 			tty:  true,
 			httpStubs: func(reg *httpmock.Registry, t *testing.T) {
