@@ -480,6 +480,22 @@ func Test_SyncRun(t *testing.T) {
 			wantStdout: "✓ Synced the \"FORKOWNER:trunk\" branch from \"OWNER:trunk\"\n",
 		},
 		{
+			name: "sync remote fork with parent and specified branch differing from default - tty",
+			tty:  true,
+			opts: &SyncOptions{
+				DestArg: "FORKOWNER/REPO-FORK",
+				Branch:  "new-feature",
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("POST", "repos/FORKOWNER/REPO-FORK/merge-upstream"),
+					httpmock.RESTPayload(200, `{"base_branch": "OWNER:trunk"}`, func(payload map[string]any) {
+						assert.Equal(t, map[string]any{"branch": "new-feature"}, payload)
+					}))
+			},
+			wantStdout: "✓ Synced the \"FORKOWNER:new-feature\" branch from \"OWNER:trunk\"\n",
+		},
+		{
 			name: "sync remote fork with parent using api fallback - tty",
 			tty:  true,
 			opts: &SyncOptions{
