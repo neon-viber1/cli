@@ -74,13 +74,13 @@ func Test_NewCmdLock(t *testing.T) {
 		{
 			name:    "bad reason",
 			args:    "--reason bad 451",
-			wantErr: "invalid reason bad",
+			wantErr: "invalid reason bad (valid reasons: none, off_topic, resolved, spam, too_heated)",
 		},
 		{
 			name:    "bad reason tty",
 			args:    "--reason bad 451",
 			tty:     true,
-			wantErr: "X Invalid reason: bad\n",
+			wantErr: "X Invalid reason: bad (valid reasons: none, off_topic, resolved, spam, too_heated)\n",
 		},
 		{
 			name: "interactive",
@@ -736,5 +736,79 @@ func TestReasons(t *testing.T) {
 
 	for _, reason := range reasons {
 		assert.Equal(t, strings.ToUpper(reason), string(*reasonsMap[reason]))
+	}
+}
+
+func TestNewCmdLock_noneReason(t *testing.T) {
+	for _, parent := range []string{"issue", "pr"} {
+		for _, value := range []string{"none", "NONE", "None"} {
+			t.Run(parent+" "+value, func(t *testing.T) {
+				ios, _, _, _ := iostreams.Test()
+				ios.SetStdoutTTY(true)
+				ios.SetStdinTTY(true)
+				ios.SetStderrTTY(true)
+				f := &cmdutil.Factory{IOStreams: ios}
+				var opts *LockOptions
+				cmd := NewCmdLock(f, parent, func(_ string, o *LockOptions) error {
+					opts = o
+					return nil
+				})
+				cmd.PersistentFlags().StringP("repo", "R", "", "")
+				cmd.SetArgs([]string{"--reason", value, "451"})
+				cmd.SetIn(&bytes.Buffer{})
+				cmd.SetOut(io.Discard)
+				cmd.SetErr(io.Discard)
+
+				_, err := cmd.ExecuteC()
+				assert.NoError(t, err)
+				assert.Equal(t, "", opts.Reason)
+				assert.False(t, opts.Interactive, "must not prompt")
+				assert.Equal(t, 451, opts.IssueNumber)
+			})
+		}
+	}
+}
+
+func TestNewCmdLock_noneReasonOmitsLockReason(t *testing.T) {
+	for _, parent := range []string{"issue", "pr"} {
+		t.Run(parent, func(t *testing.T) {
+			ios, _, _, _ := iostreams.Test()
+			ios.SetStdoutTTY(true)
+			ios.SetStdinTTY(true)
+			reg := &httpmock.Registry{}
+			defer reg.Verify(t)
+			typename := "Issue"
+			if parent == "pr" {
+				typename = "PullRequest"
+			}
+			reg.Register(
+				httpmock.GraphQL(`query IssueByNumber\b`),
+				httpmock.StringResponse(`{ "data": { "repository": { "hasIssuesEnabled": true, "issue": {
+					"number": 451, "title": "t", "__typename": "`+typename+`" }}}}`))
+			var input map[string]any
+			reg.Register(
+				httpmock.GraphQL(`mutation LockLockable\b`),
+				httpmock.GraphQLMutation(`{ "data": { "lockLockable": { "lockedRecord": { "locked": true }}}}`,
+					func(m map[string]any) { input = m }))
+
+			f := &cmdutil.Factory{
+				IOStreams:  ios,
+				HttpClient: func() (*http.Client, error) { return &http.Client{Transport: reg}, nil },
+				BaseRepo:   func() (ghrepo.Interface, error) { return ghrepo.New("OWNER", "REPO"), nil },
+				Prompter:   &prompter.PrompterMock{},
+			}
+			cmd := NewCmdLock(f, parent, nil)
+			cmd.PersistentFlags().StringP("repo", "R", "", "")
+			cmd.SetArgs([]string{"--reason", "none", "451"})
+			cmd.SetIn(&bytes.Buffer{})
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+
+			_, err := cmd.ExecuteC()
+			assert.NoError(t, err)
+			assert.NotNil(t, input)
+			assert.NotContains(t, input, "lockReason")
+			assert.Equal(t, 0, len(f.Prompter.(*prompter.PrompterMock).SelectCalls()))
+		})
 	}
 }

@@ -40,6 +40,12 @@ var reasons = []string{"off_topic", "resolved", "spam", "too_heated"}
 
 var reasonsString = strings.Join(reasons, ", ")
 
+// noReason is the --reason value that locks without a reason, matching the
+// "None" choice of the interactive prompt.
+const noReason = "none"
+
+var validReasonsString = noReason + ", " + reasonsString
+
 var reasonsApi = []githubv4.LockReason{
 	githubv4.LockReasonOffTopic,
 	githubv4.LockReasonResolved,
@@ -149,15 +155,17 @@ func NewCmdLock(f *cmdutil.Factory, parentName string, runF func(string, *LockOp
 
 			reasonProvided := cmd.Flags().Changed("reason")
 			if reasonProvided {
-				_, ok := reasonsMap[opts.Reason]
-				if !ok {
+				// "none" locks without a reason, like the interactive "None" choice.
+				if strings.EqualFold(opts.Reason, noReason) {
+					opts.Reason = ""
+				} else if _, ok := reasonsMap[opts.Reason]; !ok {
 					if opts.IO.IsStdoutTTY() {
 						cs := opts.IO.ColorScheme()
 
-						return cmdutil.FlagErrorf("%s Invalid reason: %v\n",
-							cs.FailureIconWithColor(cs.Red), opts.Reason)
+						return cmdutil.FlagErrorf("%s Invalid reason: %v (valid reasons: %s)\n",
+							cs.FailureIconWithColor(cs.Red), opts.Reason, validReasonsString)
 					} else {
-						return fmt.Errorf("invalid reason %s", opts.Reason)
+						return fmt.Errorf("invalid reason %s (valid reasons: %s)", opts.Reason, validReasonsString)
 					}
 				}
 			} else if opts.IO.CanPrompt() {
@@ -171,7 +179,7 @@ func NewCmdLock(f *cmdutil.Factory, parentName string, runF func(string, *LockOp
 		},
 	}
 
-	msg := fmt.Sprintf("Optional reason for locking conversation (%v).", reasonsString)
+	msg := fmt.Sprintf("Optional reason for locking conversation (%v). Use %q to lock without a reason.", reasonsString, noReason)
 
 	cmd.Flags().StringVarP(&opts.Reason, "reason", "r", "", msg)
 	return cmd
